@@ -25,7 +25,7 @@ button:disabled {
 }
 .app-shell {
   display:grid;
-  grid-template-columns:270px minmax(0,1fr);
+  grid-template-columns:300px minmax(0,1fr);
   min-height:100vh
 }
 .sidebar {
@@ -127,7 +127,7 @@ button:disabled {
   background:none;
   border:1px solid transparent;
   border-radius:6px;
-  padding:10px 8px;
+  padding:8px;
   font-size:12px;
   line-height:1.35
 }
@@ -154,30 +154,64 @@ button:disabled {
   border-color:#365a3b;
   color:#d9f4da
 }
+.tree-summary {
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  min-width:0;
+  flex:1
+}
 .tree-row .tree-text {
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
-  flex:1
+  width:100%
 }
-.tree-row .tree-status {
-  width:6px;
-  height:6px;
-  border-radius:50%;
-  background:#748075;
-  flex:none
+.tree-meta {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  min-width:0
 }
-.tree-row .tree-status.completed {
-  background:#95db98
+.tree-status {
+  flex:none;
+  border:1px solid #58665b;
+  border-radius:4px;
+  background:#29332b;
+  color:#bac8bc;
+  padding:2px 5px;
+  font-size:10px;
+  font-weight:700
 }
-.tree-row .tree-status.implementing {
-  background:#d5ad64
+.tree-status::before,.status-pill::before {
+  content:'○';
+  margin-right:4px
 }
-.tree-row .tree-status.verifying {
-  background:#90accb
+.tree-status.waiting::before,.status-pill.waiting::before { content:'!' }
+.tree-status.running::before,.status-pill.running::before { content:'▶' }
+.tree-status.completed::before,.status-pill.completed::before { content:'✓' }
+.tree-status-detail {
+  color:#90a294;
+  font-size:10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
 }
-.tree-row .tree-status.ready {
-  background:#a7d7ac
+.tree-status.waiting {
+  border-color:#a87837;
+  background:#3b2d1c;
+  color:#f1c681
+}
+.tree-status.running {
+  border-color:#6484a7;
+  background:#243447;
+  color:#b5d7f6
+}
+.tree-status.completed {
+  border-color:#5f9d66;
+  background:#243829;
+  color:#b5e8b9
 }
 .tree-empty {
   padding:18px 14px;
@@ -379,8 +413,19 @@ button:disabled {
   background:#213025;
   color:#a8d7ac;
   padding:8px 10px;
-  font-size:10px;
+  font-size:11px;
+  font-weight:700;
   white-space:nowrap
+}
+.status-pill.waiting {
+  background:#3b2d1c;
+  border-color:#a87837;
+  color:#f1c681
+}
+.status-pill.running {
+  background:#243447;
+  border-color:#6484a7;
+  color:#b5d7f6
 }
 .status-pill.completed {
   background:#263b29;
@@ -1061,7 +1106,7 @@ dialog input:focus {
   .task-tree {
     display:flex;
     overflow:auto;
-    max-height:58px
+    max-height:82px
   }
   .tree-row {
     white-space:nowrap;

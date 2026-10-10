@@ -11,10 +11,29 @@ from app.agent import AgentManager
 from app.evidence import evidence_path, list_evidence, save_evidence
 from app.model_catalog import codex_models
 from app.storage import DEFAULT_CODEX_MODEL, assign_default_models, create_task, read_chat, read_task, set_readiness, update_task
+from app.task_status import display_status
 
 
 class WorkflowTest(unittest.TestCase):
     """Exercise a planning exchange and its implementation gate."""
+
+    def test_display_status_shows_next_action_and_active_runs(self):
+        """Check task and chat inputs produce the user's visible next step."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            task = create_task(root, "状態確認")
+            self.assertEqual(display_status(task, [], False)["key"], "not-started")
+            questions = [{"role": "assistant", "questions": [{"prompt": "対象は？"}]}]
+            self.assertEqual(display_status(task, questions, False)["detail"], "質問に回答")
+            self.assertEqual(display_status(task, questions, True)["key"], "running")
+            plan = "# 計画\n改善する"
+            update_task(root, task["id"], {"plan": plan})
+            ready = set_readiness(root, task["id"], True, plan, "実装可能")
+            self.assertEqual(display_status(ready, questions, False)["detail"], "実装を開始")
+            ready["status"] = "verifying"
+            self.assertEqual(display_status(ready, questions, False)["detail"], "検証結果を確認")
+            ready["status"] = "completed"
+            self.assertEqual(display_status(ready, questions, False)["key"], "completed")
 
     def test_codex_default_model_and_existing_task_migration(self):
         """Check new, switched, and old tasks use the configured Codex default."""

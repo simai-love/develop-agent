@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.storage import assign_default_models, complete_task, create_task, list_tasks, read_chat, read_task, update_task
+from app.task_status import display_status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +34,13 @@ class Handler(BaseHTTPRequestHandler):
         """Read a JSON request body and return its object value."""
         return json.loads(self.rfile.read(int(self.headers["Content-Length"])))
 
+    def present_task(self, task: dict) -> dict:
+        """Add the task's current display status and return its API record."""
+        with AGENT.lock:
+            active = task["id"] in AGENT.active_tasks
+        full_task = task if "plan" in task else read_task(TASKS_ROOT, task["id"])
+        return {**task, "active": active, "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active)}
+
     def do_GET(self) -> None:
         """Return a task list, one task, or a static GUI asset."""
         parsed = urlparse(self.path)
@@ -45,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200 if run else 404, run or {"error": "Run not found"})
             return
         if path == "/api/tasks":
-            self.send_json(200, list_tasks(TASKS_ROOT))
+            self.send_json(200, [self.present_task(task) for task in list_tasks(TASKS_ROOT)])
             return
         if path.startswith("/api/tasks/") and "/evidence" in path:
             parts = path.strip("/").split("/")
@@ -78,7 +86,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/tasks/"):
             try:
-                self.send_json(200, read_task(TASKS_ROOT, path.removeprefix("/api/tasks/")))
+                self.send_json(200, self.present_task(read_task(TASKS_ROOT, path.removeprefix("/api/tasks/"))))
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Task not found"})
             return
@@ -115,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self.read_json()
             if path == "/api/tasks":
-                self.send_json(201, create_task(TASKS_ROOT, body["title"], body.get("parent_id")))
+                self.send_json(201, self.present_task(create_task(TASKS_ROOT, body["title"], body.get("parent_id"))))
             elif path.endswith("/chat"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
                 self.send_json(202, AGENT.start_chat(task_id, body["phase"], body["message"]))
@@ -123,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/complete")
                 if task_id in AGENT.active_tasks:
                     raise ValueError("Cannot complete a task during an Agent run")
-                self.send_json(200, complete_task(TASKS_ROOT, task_id, body["result"]))
+                self.send_json(200, self.present_task(complete_task(TASKS_ROOT, task_id, body["result"])))
             else:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/execute")
                 self.send_json(202, AGENT.start_implementation(task_id))
@@ -141,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
             changes = self.read_json()
             if task_id in AGENT.active_tasks and ({"title", "plan", "model", "provider"} & changes.keys()):
                 raise ValueError("Cannot change task metadata during an Agent run")
-            self.send_json(200, update_task(TASKS_ROOT, task_id, changes))
+            self.send_json(200, self.present_task(update_task(TASKS_ROOT, task_id, changes)))
         except FileNotFoundError:
             self.send_json(404, {"error": "Task not found"})
         except (KeyError, TypeError, ValueError) as error:
