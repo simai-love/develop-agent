@@ -1,7 +1,6 @@
 import { renderMarkdown } from './markdown.mjs';
 
 const $ = (selector) => document.querySelector(selector);
-const statusLabels = { planning: '仮説構築中', ready: '実行待ち', implementing: '実装中', verifying: '検証中', completed: '完了済み' };
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
 const chatHeightStorageKey = 'develop-agent.chat-height';
 const chatHeightMin = 260;
@@ -11,7 +10,14 @@ let refreshingUntrackedRun = false;
 
 function isTaskBusy(task) {
   /** Return whether the selected task has a running Agent request. */
-  return Boolean(task && (state.activeRuns.has(task.id) || task.implementation?.state === 'running'));
+  return Boolean(task && (state.activeRuns.has(task.id) || task.active || task.implementation?.state === 'running'));
+}
+
+function taskStatus(task) {
+  /** Return a task's visible status, including a locally started Agent run. */
+  return isTaskBusy(task)
+    ? { key: 'running', label: '実行中', detail: 'Agentが作業しています' }
+    : task.display_status;
 }
 
 function renderAgentProgress() {
@@ -33,8 +39,8 @@ function renderAgentProgress() {
     title.textContent = '実装中：Agentが作業しています';
     description.textContent = '計画に沿ってコードを変更し、続けて検証します。完了後に結果を確認できます。';
   } else {
-    title.textContent = '実装・検証を進行中';
-    description.textContent = 'Agentがコードの修正または検証を進めています。完了後に結果を確認できます。';
+    title.textContent = 'Agentが作業中';
+    description.textContent = '作業が終わるとタスクの表示が更新されます。';
   }
 }
 
@@ -167,13 +173,24 @@ function renderTree() {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = `tree-row${state.task?.id === task.id ? ' selected' : ''}`;
-      row.title = task.title;
-      const marker = document.createElement('span');
-      marker.className = `tree-status ${task.status}`;
+      const status = taskStatus(task);
+      row.title = `${task.title}：${status.label}（${status.detail}）`;
       const label = document.createElement('span');
       label.className = 'tree-text';
       label.textContent = task.title;
-      row.append(marker, label);
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `tree-status ${status.key}`;
+      statusBadge.textContent = status.label;
+      const statusDetail = document.createElement('span');
+      statusDetail.className = 'tree-status-detail';
+      statusDetail.textContent = status.detail;
+      const summary = document.createElement('span');
+      summary.className = 'tree-summary';
+      const meta = document.createElement('span');
+      meta.className = 'tree-meta';
+      meta.append(statusBadge, statusDetail);
+      summary.append(label, meta);
+      row.append(summary);
       row.addEventListener('click', () => selectTask(task.id));
       const add = document.createElement('button');
       add.type = 'button';
@@ -220,8 +237,9 @@ function render() {
   $('#task-title').textContent = task.title;
   $('#task-number').textContent = `/ ${task.id.slice(0, 6).toUpperCase()}`;
   $('#task-parent').textContent = parent ? `親タスク / ${parent.title}` : '最上位の開発項目';
-  $('#status-label').textContent = statusLabels[task.status] || task.status;
-  $('#status-label').classList.toggle('completed', task.status === 'completed');
+  const status = taskStatus(task);
+  $('#status-label').textContent = `${status.label} · ${status.detail}`;
+  $('#status-label').className = `status-pill ${status.key}`;
   $('#tab-plan').classList.toggle('active', isPlan);
   $('#tab-result').classList.toggle('active', !isPlan);
   $('#tab-plan').setAttribute('aria-selected', String(isPlan));
@@ -545,13 +563,13 @@ function watchRun(run) {
 }
 
 async function refreshUntrackedRun() {
-  /** Refresh a running implementation after page reload; return nothing. */
+  /** Refresh an Agent run found after page reload; return nothing. */
   const taskId = state.task?.id;
-  if (refreshingUntrackedRun || !taskId || state.activeRuns.has(taskId) || state.task.implementation?.state !== 'running') return;
+  if (refreshingUntrackedRun || !taskId || state.activeRuns.has(taskId) || !isTaskBusy(state.task)) return;
   refreshingUntrackedRun = true;
   try {
     const task = await api(`/api/tasks/${taskId}`);
-    if (state.task?.id !== taskId || state.activeRuns.has(taskId) || task.implementation?.state === 'running') return;
+    if (state.task?.id !== taskId || state.activeRuns.has(taskId) || isTaskBusy(task)) return;
     state.task = task;
     state.drafts = { plan: task.plan, result: task.result };
     await refreshTasks();
@@ -791,6 +809,7 @@ async function main() {
   bindChatResize();
   bindEvents();
   setInterval(() => refreshUntrackedRun().catch(() => {}), 1500);
+  setInterval(() => { if (state.tasks.some(isTaskBusy)) refreshTasks().catch(() => {}); }, 3000);
   $('#clock').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   try {
     const agent = await api('/api/agent');
