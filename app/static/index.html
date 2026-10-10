@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Develop Agent — Research workspace</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="タスク一覧">
+      <div class="brand"><span class="brand-mark">◈</span><span>DEVELOP<span class="brand-light">/AGENT</span></span></div>
+      <div class="workspace-label">WORKSPACE <span class="local-badge">LOCAL</span></div>
+      <div class="sidebar-head"><h2>開発項目</h2><button id="add-root" class="icon-button" title="新しい開発項目" aria-label="新しい開発項目">＋</button></div>
+      <nav id="task-tree" class="task-tree" aria-label="開発項目"></nav>
+      <div class="sidebar-bottom"><span class="live-dot"></span> Local workspace <small>データはこの端末に保存</small></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar"><div class="topbar-path"><button id="home-button" class="home-button" aria-label="ホームへ戻る">⌂ ホーム</button><span>/</span> <strong id="breadcrumb">概要</strong></div><div class="topbar-right">RESEARCH & DEVELOPMENT <span class="topbar-separator"></span><span id="clock"></span></div></header>
+      <div id="empty-view" class="empty-view">
+        <div class="eyebrow">RESEARCH WORKSPACE / 01</div>
+        <div class="empty-orbit"><span>✳</span></div>
+        <h1>開発の意図から、<br><em>検証の結果まで。</em></h1>
+        <p>仮説、実装方針、検証結果をひとつの開発項目に記録します。<br>まずは最初の開発項目を作成してください。</p>
+        <button id="empty-add" class="primary-button">＋ 開発項目を作成 <span>→</span></button>
+        <div class="empty-steps"><div><b>01</b><span>仮説を立てる</span></div><i></i><div><b>02</b><span>実装を進める</span></div><i></i><div><b>03</b><span>結果を確かめる</span></div></div>
+      </div>
+
+      <section id="task-view" class="task-view hidden" aria-label="タスク詳細">
+        <div class="task-heading"><div><div class="eyebrow">DEVELOPMENT ITEM <span id="task-number"></span></div><h1 id="task-title"></h1><p id="task-parent"></p></div><div class="heading-actions"><span id="status-label" class="status-pill" aria-label="タスクの状態"></span><button id="rename-task" class="subtle-button">名前を変更</button><button id="add-child" class="subtle-button">＋ 子タスク</button><button id="delete-task" class="danger-button">削除</button></div></div>
+        <div class="task-tabs" role="tablist"><button id="tab-plan" class="tab active" role="tab" aria-selected="true">01 <span>仮説・要件・実装方針</span></button><button id="tab-result" class="tab" role="tab" aria-selected="false">02 <span>検証結果</span></button></div>
+        <div class="work-layout">
+          <div id="question-callout" class="question-callout hidden" role="status" aria-live="polite"><span class="question-callout-icon" aria-hidden="true">?</span><div><strong id="question-callout-title">要件がまだ固まっていません</strong><p id="question-callout-description">Agentからの質問を確認し、各質問に選択肢または自由記述で答えてください。</p></div><button id="focus-question" class="secondary-button" type="button">質問に答える ↓</button></div>
+          <div id="agent-progress" class="agent-progress hidden" role="status" aria-live="polite"><span class="agent-progress-spinner" aria-hidden="true"></span><div><strong id="agent-progress-title"></strong><p id="agent-progress-description"></p></div></div>
+          <section id="chat-panel" class="chat-column" aria-label="Agentチャット"><div class="chat-head"><div class="chat-avatar">✳</div><div><strong>Agent チャット <span id="provider-label" class="provider-label">CODEX CLI</span></strong><small id="chat-context">計画について議論</small></div><label class="model-picker">CLI <select id="provider-select" aria-label="Agent CLI"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label><label id="model-picker" class="model-picker">モデル <select id="model-select" aria-label="Agentのモデル"></select></label><span id="agent-dot" class="offline-dot" title="接続状態"></span></div><div id="chat-messages" class="chat-body"></div><form id="chat-form" class="chat-compose"><textarea id="chat-input" placeholder="Agentに相談する内容を入力" aria-label="Agentチャット入力"></textarea><button id="chat-send" type="submit" aria-label="送信">↑</button></form><div id="chat-resize-handle" class="chat-resize-handle" role="separator" aria-label="Agentチャットの高さを調整" aria-orientation="horizontal" aria-valuemin="260" aria-valuemax="1000" tabindex="0" title="上下にドラッグして高さを調整。矢印キーでも調整できます"><span aria-hidden="true"></span></div></section>
+          <div class="content-column">
+            <div class="section-intro"><div><div class="eyebrow" id="section-kicker">PLAN / HYPOTHESIS</div><h2 id="section-title">開発の計画</h2><p id="section-description">目的から仮説、要件、実装手順までをMarkdownで整理します。</p></div><div class="save-indicator" id="save-indicator">保存済み</div></div>
+            <div id="plan-empty" class="plan-empty hidden"><span>PLAN NOT CREATED</span><h3>計画はまだ作成されていません</h3><p>まず上のAgentにチャットして、目的・仮説・要件・実装方針を整理してください。Agentが計画を保存すると、ここに表示されます。</p><button id="focus-chat" class="subtle-button">Agentに相談する ↑</button></div>
+            <div id="plan-highlights" class="plan-highlights hidden" aria-label="計画の要点"><section id="plan-questions-card" class="plan-highlight questions hidden"><strong>確認したいこと</strong><p id="plan-questions-text"></p></section><section id="plan-purpose-card" class="plan-highlight purpose hidden"><strong>目的</strong><p id="plan-purpose-text"></p></section></div>
+            <div id="plan-editor" class="editor-card"><div class="editor-toolbar"><span class="file-icon">M↓</span><strong id="file-label">plan.md</strong><span class="toolbar-space"></span><button id="plan-mode-toggle" type="button" class="subtle-button">Markdownを編集</button></div><div id="plan-preview" class="plan-preview" aria-label="計画のプレビュー"></div><textarea id="markdown-editor" class="hidden" spellcheck="false" aria-label="Markdown編集"></textarea><div class="editor-footer"><span id="file-path"></span><button id="save-button" class="secondary-button hidden">変更を保存</button></div></div>
+            <section id="report-section" class="report-section hidden" aria-label="検証レポート"><div id="report-list" class="report-list"></div></section>
+            <div id="plan-actions" class="action-card"><div class="action-symbol">↗</div><div><h3>計画を実装へ</h3><p id="readiness-reason">Agentに計画を相談してください。</p></div><button id="execute-button" class="primary-button">実装に進む <span>↗</span></button></div>
+            <section id="evidence-section" class="evidence-section hidden"><div class="section-intro"><div><div class="eyebrow">EVIDENCE</div><h2>画像・動画・検証データ</h2><p>資料を追加してAgentに検証結果を相談できます。</p></div><label class="secondary-button upload-button">資料を追加<input id="evidence-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.csv,.json,.pdf" multiple hidden></label></div><div id="evidence-list" class="evidence-list"></div></section>
+            <div id="result-actions" class="action-card hidden"><div class="action-symbol">✓</div><div><h3>検証結果を確認</h3><p>目的を達成したと判断したら、この開発項目を完了にします。</p></div><button id="complete-button" class="primary-button">タスクを完了 <span>→</span></button></div>
+            <div class="details-card"><button id="details-toggle" aria-expanded="false">記録の保存先と変更内容 <span>⌄</span></button><div id="details-content" class="hidden"><p>この開発項目の記録はローカルの <code id="task-path"></code> に保存されます。</p><div id="changed-files"></div></div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="create-dialog"><form id="create-form"><div class="dialog-eyebrow">NEW DEVELOPMENT ITEM</div><h2 id="dialog-title">開発項目を作成</h2><p id="dialog-description">取り組みたい目的を短い名前で記入してください。</p><label for="new-title">開発項目の名前</label><input id="new-title" name="title" maxlength="120" required placeholder="例：アルゴリズムの処理速度を改善する"><div class="dialog-actions"><button type="button" id="cancel-create" class="subtle-button">キャンセル</button><button class="primary-button" type="submit">作成する <span>→</span></button></div></form></dialog>
+  <dialog id="rename-dialog"><form id="rename-form"><div class="dialog-eyebrow">RENAME DEVELOPMENT ITEM</div><h2>開発項目の名前を変更</h2><label for="rename-title">新しい名前</label><input id="rename-title" name="title" maxlength="120" required><div class="dialog-actions"><button type="button" id="cancel-rename" class="subtle-button">キャンセル</button><button class="primary-button" type="submit">保存する <span>→</span></button></div></form></dialog>
+  <dialog id="delete-dialog"><div class="dialog-eyebrow">DELETE DEVELOPMENT ITEM</div><h2>開発項目を削除しますか？</h2><p id="delete-description"></p><p class="delete-warning">計画、チャット、検証レポート、資料も削除されます。この操作は取り消せません。開発コードは削除されません。</p><div class="dialog-actions"><button type="button" id="cancel-delete" class="subtle-button">キャンセル</button><button type="button" id="confirm-delete" class="danger-button">削除する</button></div></dialog>
+  <dialog id="execute-dialog"><div class="dialog-eyebrow">START IMPLEMENTATION</div><h2>実装に進みますか？</h2><p>保存済みの計画に従ってAgentがコードを変更し、そのまま検証結果を記録します。完了まで少し時間がかかる場合があります。</p><div class="dialog-actions"><button type="button" id="cancel-execute" class="subtle-button">キャンセル</button><button type="button" id="confirm-execute" class="primary-button">実装に進む <span>↗</span></button></div></dialog>
+  <div id="toast" class="toast hidden" role="status"></div>
+</body>
+</html>

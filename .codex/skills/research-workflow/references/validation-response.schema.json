@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {"type": "string"},
+    "outcome": {"type": "string", "enum": ["supported", "not_supported", "inconclusive"]},
+    "evidence_files": {"type": "array", "items": {"type": "string"}},
+    "needs_followup": {"type": "boolean"}
+  },
+  "required": ["message", "outcome", "evidence_files", "needs_followup"],
+  "additionalProperties": false
+}

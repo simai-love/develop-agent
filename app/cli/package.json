@@ -1,0 +1,8 @@
+{
+  "name": "develop-agent-cli-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "@openai/codex": "0.162.1"
+  }
+}
