@@ -1,0 +1,4 @@
+interface:
+  display_name: "研究開発タスクの計画と検証"
+  short_description: "開発要件を整理し、根拠に基づいて結果を検証する"
+  default_prompt: "$research-workflow を使い、この研究開発タスクの計画または検証を進めてください。"

@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {"type": "string"},
+    "implementation_ready": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "prompt": {"type": "string"},
+          "options": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["prompt", "options"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["message", "implementation_ready", "reason", "questions"],
+  "additionalProperties": false
+}
