@@ -4,6 +4,21 @@
     "message": {"type": "string"},
     "implementation_ready": {"type": "boolean"},
     "reason": {"type": "string"},
+    "child_task_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "purpose": {"type": "string"},
+          "scope": {"type": "string"},
+          "verification": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["title", "purpose", "scope", "verification", "reason"],
+        "additionalProperties": false
+      }
+    },
     "questions": {
       "type": "array",
       "items": {
