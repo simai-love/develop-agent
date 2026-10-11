@@ -143,6 +143,32 @@ class WorkflowTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manager.start_implementation(task["id"])
 
+    def test_plan_agent_records_child_split_proposal(self):
+        """Store a structured split suggestion without creating a child task."""
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            self._init_project(project)
+            tasks = project / "tasks"
+            cli = project / "fake-codex"
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "from pathlib import Path\n"
+                "Path('plan.md').write_text('# 計画\\n作業を分割する', encoding='utf-8')\n"
+                "data = {'message': '分割を提案します', 'implementation_ready': True, 'reason': '範囲を分ける', 'questions': [], "
+                "'child_task_proposals': [{'title': '検証A', 'purpose': 'Aを調べる', 'scope': 'Aの実装', 'verification': 'Aを試す', 'reason': '独立して検証できる'}]}\n"
+                "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            task = create_task(tasks, "親")
+            manager = AgentManager(tasks, project, str(cli))
+            self._await_run(manager, manager.start_chat(task["id"], "plan", "調べて")["id"])
+            saved = read_task(tasks, task["id"])
+            self.assertEqual(saved["child_proposals"][0]["title"], "検証A")
+            self.assertFalse(saved["can_implement"])
+            self.assertEqual(len([item for item in tasks.iterdir() if item.is_dir()]), 1)
+
     def test_evidence_is_task_local_and_safe(self):
         """Return after checking uploaded media and unsafe path rejection."""
         with tempfile.TemporaryDirectory() as temporary:

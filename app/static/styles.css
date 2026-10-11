@@ -1158,3 +1158,24 @@ dialog input:focus {
     max-width:56%
   }
 }
+.project-row {
+  width: 100%;
+  margin-top: 10px;
+  font-weight: 700;
+}
+
+.proposal-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid var(--line, #d8d8d8);
+}
+
+.proposal-card p {
+  white-space: pre-line;
+}
+
+.proposal-card input,
+.proposal-card textarea {
+  width: 100%;
+}

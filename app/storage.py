@@ -45,6 +45,13 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("readiness", {"ready": False, "plan_hash": None, "reason": "Agentに計画を相談してください"})
     task.setdefault("model", "")
     task.setdefault("provider", "codex")
+    task.setdefault("project_id", None)
+    task.setdefault("branch", None)
+    task.setdefault("commit_hash", None)
+    task.setdefault("pre_split_commit", None)
+    task.setdefault("merge_hash", None)
+    task.setdefault("legacy_completed", False)
+    task.setdefault("child_proposals", [])
     task["plan"] = (directory / "plan.md").read_text(encoding="utf-8")
     reports = task.setdefault("reports", [])
     legacy_result = (directory / "result.md").read_text(encoding="utf-8")
@@ -118,20 +125,27 @@ def delete_task(root: Path, task_id: str) -> list[str]:
     return task_ids
 
 
-def create_task(root: Path, title: str, parent_id: str | None = None) -> dict:
-    """Create a task with title and optional parent ID, then return its full record."""
+def create_task(root: Path, title: str, parent_id: str | None = None, project_id: str | None = None, initial_plan: str = "", task_id: str | None = None) -> dict:
+    """Create a task from title and hierarchy IDs, returning its full record."""
     title = title.strip()
     if not title:
         raise ValueError("Title is required")
     if parent_id is not None:
         read_task(root, parent_id)
-    task_id = uuid4().hex[:12]
+    task_id = task_id or uuid4().hex[:12]
     directory = task_dir(root, task_id)
     directory.mkdir(parents=True)
     timestamp = now()
     task = {
         "id": task_id,
         "parent_id": parent_id,
+        "project_id": project_id,
+        "branch": None,
+        "commit_hash": None,
+        "pre_split_commit": None,
+        "merge_hash": None,
+        "legacy_completed": False,
+        "child_proposals": [],
         "title": title,
         "status": "planning",
         "created_at": timestamp,
@@ -144,7 +158,7 @@ def create_task(root: Path, title: str, parent_id: str | None = None) -> dict:
         "reports": [],
     }
     write_text(directory / "task.json", json.dumps(task, ensure_ascii=False, indent=2) + "\n")
-    write_text(directory / "plan.md", "")
+    write_text(directory / "plan.md", initial_plan)
     write_text(directory / "result.md", "")
     (directory / "reports").mkdir()
     (directory / "evidence").mkdir()
@@ -227,12 +241,62 @@ def complete_task(root: Path, task_id: str, result: str) -> dict:
     return read_task(root, task_id)
 
 
+def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: str) -> dict:
+    """Mark task_id complete after Git or legacy review and return its record."""
+    if kind not in {"commit", "merge", "legacy"}:
+        raise ValueError("Invalid completion kind")
+    task = read_task(root, task_id)
+    task["status"] = "completed"
+    task["completed_at"] = now()
+    task["updated_at"] = now()
+    if kind == "legacy":
+        task["legacy_completed"] = True
+    else:
+        task["commit_hash" if kind == "commit" else "merge_hash"] = git_hash
+    save_metadata(root, task)
+    return read_task(root, task_id)
+
+
+def save_child_proposals(root: Path, task_id: str, proposals: list[dict], current_plan_hash: str) -> dict:
+    """Store proposals for task_id and return the updated task."""
+    task = read_task(root, task_id)
+    existing = task["child_proposals"]
+    incoming = {hashlib.sha256(json.dumps(proposal, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12] for proposal in proposals}
+    for prior in existing:
+        if prior["status"] == "pending" and prior["id"] not in incoming:
+            prior["status"] = "superseded"
+    for proposal in proposals:
+        identity = hashlib.sha256(json.dumps(proposal, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+        prior = next((item for item in existing if item["id"] == identity), None)
+        if prior:
+            if prior["status"] == "pending":
+                prior["plan_hash"] = current_plan_hash
+            continue
+        existing.append({"id": identity, **proposal, "plan_hash": current_plan_hash, "status": "pending", "child_id": None})
+    task["updated_at"] = now()
+    save_metadata(root, task)
+    return read_task(root, task_id)
+
+
+def update_child_proposal(root: Path, task_id: str, proposal_id: str, status: str, child_id: str | None = None) -> dict:
+    """Change a proposal's status and return the updated task."""
+    task = read_task(root, task_id)
+    proposal = next((item for item in task["child_proposals"] if item["id"] == proposal_id), None)
+    if proposal is None:
+        raise ValueError("提案が見つかりません")
+    proposal["status"] = status
+    proposal["child_id"] = child_id
+    task["updated_at"] = now()
+    save_metadata(root, task)
+    return read_task(root, task_id)
+
+
 def report_draft_path(root: Path, task_id: str) -> Path:
     """Return the temporary report path for task ID under root."""
     return task_dir(root, task_id) / "report-draft.md"
 
 
-def append_report(root: Path, task_id: str, outcome: str, changed_files: list[str], evidence_files: list[str], provider: str, model: str, needs_followup: bool) -> dict:
+def append_report(root: Path, task_id: str, outcome: str, changed_files: list[str], evidence_files: list[str], provider: str, model: str, needs_followup: bool, report_kind: str = "validation", summary_basis: dict | None = None, commit_message: str = "") -> dict:
     """Save the task's draft as a new report and return the updated task."""
     task = read_task(root, task_id)
     draft = report_draft_path(root, task_id)
@@ -243,9 +307,9 @@ def append_report(root: Path, task_id: str, outcome: str, changed_files: list[st
     filename = f"reports/{number:04}.md"
     write_text(task_dir(root, task_id) / filename, content)
     draft.unlink()
-    task["reports"].append({"number": number, "file": filename, "created_at": now(), "outcome": outcome, "changed_files": changed_files, "evidence_files": evidence_files})
+    task["reports"].append({"number": number, "file": filename, "created_at": now(), "outcome": outcome, "changed_files": changed_files, "evidence_files": evidence_files, "kind": report_kind, "summary_basis": summary_basis})
     previous = task["implementation"]
-    task["implementation"] = {"state": "succeeded", "changed_files": sorted(set(previous.get("changed_files", [])) | set(changed_files)), "provider": provider, "model": model, "validation_outcome": outcome, "needs_followup": needs_followup}
+    task["implementation"] = {"state": "succeeded", "changed_files": sorted(set(previous.get("changed_files", [])) | set(changed_files)), "provider": provider, "model": model, "validation_outcome": outcome, "needs_followup": needs_followup, "commit_message": commit_message or previous.get("commit_message", "")}
     task["status"] = "verifying"
     task["updated_at"] = now()
     save_metadata(root, task)

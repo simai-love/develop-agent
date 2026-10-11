@@ -1,12 +1,18 @@
 """Describe the next action for a task in the local GUI."""
 
 
-def display_status(task: dict, plan_messages: list[dict], active: bool) -> dict:
-    """Return a display key, label, and next step for task and its run state."""
+def display_status(task: dict, plan_messages: list[dict], active: bool, children: list[dict] | None = None) -> dict:
+    """Return a display key and next step for task, run, and child inputs."""
     if task["status"] == "completed":
         return {"key": "completed", "label": "完了済み", "detail": "タスクは完了しています"}
     if active or task["implementation"]["state"] == "running":
         return {"key": "running", "label": "実行中", "detail": "Agentが作業しています"}
+    if children:
+        if any(child["status"] != "completed" for child in children):
+            return {"key": "waiting", "label": "進行中", "detail": "子タスクの完了を待機"}
+        if task.get("reports") and task["reports"][-1].get("kind") == "summary":
+            return {"key": "waiting", "label": "ユーザー待ち", "detail": "総括を確認してマージ"}
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "子タスクの結果を総括"}
     if task["status"] == "verifying":
         return {"key": "waiting", "label": "ユーザー待ち", "detail": "検証結果を確認"}
     if task["status"] == "ready":

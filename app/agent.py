@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from app.evidence import list_evidence
 from app.model_catalog import codex_models
-from app.storage import append_chat, append_report, delete_task, list_tasks, read_chat, read_task, report_draft_path, set_implementation, set_readiness, task_dir, task_subtree, write_text
+from app.projects import read_project
+from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, task_dir, task_subtree, write_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent / ".codex" / "skills" / "research-workflow"
@@ -30,13 +31,20 @@ def cli_error(events: str) -> str | None:
     return errors[-1] if errors else None
 
 
+def valid_proposals(value: object) -> bool:
+    """Return whether value is a list of complete child task proposals."""
+    fields = {"title", "purpose", "scope", "verification", "reason"}
+    return isinstance(value, list) and all(isinstance(item, dict) and set(item) == fields and all(isinstance(item[key], str) and item[key].strip() for key in fields) for item in value)
+
+
 class AgentManager:
     """Run selected Agent CLI requests and expose each run's current result."""
 
-    def __init__(self, tasks_root: Path, project_root: Path, cli_path: str | None = None):
+    def __init__(self, tasks_root: Path, project_root: Path, cli_path: str | None = None, workflow=None):
         """Initialize roots and an optional CLI path; return an idle manager."""
         self.tasks_root = tasks_root
         self.project_root = project_root
+        self.workflow = workflow
         local_cli = project_root / "app" / "cli" / "node_modules" / ".bin" / "codex"
         self.cli_paths = {"codex": cli_path or (str(local_cli) if local_cli.exists() else shutil.which("codex")), "claude": shutil.which("claude")}
         self.runs: dict[str, dict] = {}
@@ -69,6 +77,8 @@ class AgentManager:
             raise ValueError("Completed tasks cannot be edited")
         if phase not in {"plan", "result"}:
             raise ValueError("Invalid chat phase")
+        if phase == "result" and self.workflow and self.workflow.children(task_id):
+            raise ValueError("親タスクでは子タスクの総括を実行してください")
         if phase == "result" and not task["implementation"].get("changed_files"):
             raise ValueError("Result chat starts after the first implementation")
         if not isinstance(message, str) or not message.strip():
@@ -82,7 +92,22 @@ class AgentManager:
             raise ValueError("Agent has not approved the saved plan for implementation")
         if task["status"] == "completed":
             raise ValueError("Completed tasks cannot be implemented again")
+        if self.workflow and self.workflow.children(task_id):
+            raise ValueError("子タスクがある場合は親の総括を作成してください")
         return self._start(task_id, "implement", "plan", "")
+
+    def start_summary(self, task_id: str) -> dict:
+        """Start a parent summary and return its run record."""
+        task = read_task(self.tasks_root, task_id)
+        if task["status"] == "completed":
+            raise ValueError("完了済みタスクの総括は更新できません")
+        if self.workflow and read_project(self.workflow.projects_root, task["project_id"]).get("needs_review"):
+            raise ValueError("移行前のGit変更を確認してください")
+        if not self.workflow or not self.workflow.children(task_id):
+            raise ValueError("総括する子タスクがありません")
+        if any(child["status"] != "completed" for child in self.workflow.children(task_id)):
+            raise ValueError("全ての子タスクを完了してください")
+        return self._start(task_id, "summary", "result", "")
 
     def get_run(self, run_id: str) -> dict | None:
         """Return a copy of run ID or None when it does not exist."""
@@ -91,9 +116,11 @@ class AgentManager:
 
     def _start(self, task_id: str, kind: str, phase: str, message: str) -> dict:
         """Register one task run and start its worker; return the run record."""
-        writes_code = kind == "implement" or phase == "result"
+        writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         with self.lock:
             task = read_task(self.tasks_root, task_id)
+            if task["status"] == "completed":
+                raise ValueError("完了済みタスクではAgentを実行できません")
             if not self.cli_paths[task["provider"]]:
                 raise ValueError(f"{task['provider']} CLI is not installed")
             if task_id in self.active_tasks:
@@ -106,6 +133,8 @@ class AgentManager:
                 raise ValueError("Wait for active chats to finish")
             if kind == "implement" and not read_task(self.tasks_root, task_id)["can_implement"]:
                 raise ValueError("Agent has not approved the saved plan for implementation")
+            if writes_code and self.workflow and task["project_id"]:
+                self.workflow.claim_code(task_id)
             run_id = uuid4().hex
             run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"])}
             self.runs[run_id] = run
@@ -120,6 +149,8 @@ class AgentManager:
             changed_files = task["implementation"].get("changed_files", []) if phase == "result" else []
             set_implementation(self.tasks_root, task_id, "running", changed_files, task["provider"], task["model"])
             write_text(report_draft_path(self.tasks_root, task_id), "")
+        elif kind == "summary":
+            write_text(report_draft_path(self.tasks_root, task_id), "")
         threading.Thread(target=self._work, args=(run_id,), daemon=True).start()
         return dict(run)
 
@@ -132,20 +163,23 @@ class AgentManager:
         previous_plan = None
         before = None
         previous_reports = []
-        writes_code = kind == "implement" or phase == "result"
+        writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         try:
-            before = self._change_snapshot()
+            code_root = self.workflow.code_path(task_id) if self.workflow and read_task(self.tasks_root, task_id)["project_id"] else self.project_root
+            before = self._change_snapshot(code_root)
             current_task = read_task(self.tasks_root, task_id)
             previous_reports = [(task_path / report["file"], report["content"]) for report in current_task["reports"]]
             previous_plan = current_task["plan"] if kind == "chat" and phase == "plan" else None
-            prompt = self._implementation_prompt(task_id) if kind == "implement" else self._chat_prompt(task_id, phase)
+            prompt = self._implementation_prompt(task_id) if kind == "implement" else self._summary_prompt(task_id) if kind == "summary" else self._chat_prompt(task_id, phase)
             schema_name = "plan-response.schema.json" if kind == "chat" and phase == "plan" else "validation-response.schema.json"
             schema_path = SKILL_ROOT / "references" / schema_name
             if run["provider"] == "codex":
                 command = [
                     self.cli_paths["codex"], "exec", "--json", "--output-last-message", str(output_path),
-                    "--cd", str(self.project_root if writes_code else task_path),
+                    "--cd", str(code_root if writes_code else task_path),
                 ]
+                if writes_code and self.workflow:
+                    command += ["--add-dir", str(task_path)]
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--output-schema", str(schema_path)]
@@ -161,7 +195,7 @@ class AgentManager:
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
             result = subprocess.run(
                 command, input=prompt, text=True, capture_output=True,
-                cwd=self.project_root if writes_code else task_path, timeout=1800,
+                cwd=code_root if writes_code else task_path, timeout=1800,
             )
             if run["provider"] == "codex":
                 answer = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
@@ -176,8 +210,10 @@ class AgentManager:
             response = json.loads(answer)
             if any(not path.exists() or path.read_text(encoding="utf-8") != content for path, content in previous_reports):
                 raise RuntimeError("Agent changed a previous validation report")
-            if kind == "chat" and phase == "plan" and self._change_snapshot() != before:
+            if kind == "chat" and phase == "plan" and self._change_snapshot(code_root) != before:
                 raise RuntimeError("A chat changed project files outside its task directory")
+            if kind == "summary" and self._change_snapshot(code_root) != before:
+                raise RuntimeError("A summary changed project code")
             if kind == "chat" and phase == "plan":
                 if not isinstance(response, dict) or not isinstance(response.get("message"), str) or not isinstance(response.get("implementation_ready"), bool) or not isinstance(response.get("reason"), str):
                     raise ValueError("Agent returned an invalid plan response")
@@ -190,19 +226,27 @@ class AgentManager:
                     and all(isinstance(option, str) for option in item["options"])
                     for item in questions
                 )
-                if not valid_questions:
+                if not valid_questions or not valid_proposals(response.get("child_task_proposals", [])):
                     raise ValueError("Agent returned an invalid choice question")
                 plan = read_task(self.tasks_root, task_id)["plan"]
-                ready = bool(response["implementation_ready"] and plan.strip() and not questions)
+                ready = bool(response["implementation_ready"] and plan.strip() and not questions and not response.get("child_task_proposals"))
                 set_readiness(self.tasks_root, task_id, ready, plan, response["reason"], previous_plan)
+                save_child_proposals(self.tasks_root, task_id, response.get("child_task_proposals", []), plan_hash(plan))
                 append_chat(self.tasks_root, task_id, phase, "assistant", response["message"], questions=questions, readiness_reason=response["reason"], provider=run["provider"], model=run["model"])
                 outcome = {"state": "succeeded", "message": response["message"]}
+            elif kind == "summary":
+                if not self._validate_result(task_id, response):
+                    raise ValueError("総括レポートを保存してください")
+                basis = self.workflow.summary_basis(task_id)
+                task = append_report(self.tasks_root, task_id, response["outcome"], [], response["evidence_files"], run["provider"], run["model"], response["needs_followup"], "summary", basis)
+                append_chat(self.tasks_root, task_id, "result", "assistant", response["message"], report_number=task["reports"][-1]["number"])
+                outcome = {"state": "succeeded", "message": response["message"], "report_number": task["reports"][-1]["number"]}
             elif kind == "chat":
                 has_report = self._validate_result(task_id, response)
-                after = self._change_snapshot()
+                after = self._change_snapshot(code_root)
                 changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
                 if has_report:
-                    task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"])
+                    task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"], commit_message=response.get("commit_message", ""))
                     report_number = task["reports"][-1]["number"]
                 else:
                     if changed or response["outcome"] != "inconclusive" or not response["needs_followup"]:
@@ -211,15 +255,17 @@ class AgentManager:
                     set_implementation(self.tasks_root, task_id, previous["state"], previous.get("changed_files", []), previous.get("provider", run["provider"]), previous.get("model", run["model"]), previous.get("validation_outcome", ""), True)
                     report_number = None
                 append_chat(self.tasks_root, task_id, phase, "assistant", response["message"], report_number=report_number, changed_files=changed, validation_outcome=response["outcome"], needs_followup=response["needs_followup"], provider=run["provider"], model=run["model"])
+                if response.get("child_task_proposals"):
+                    save_child_proposals(self.tasks_root, task_id, response["child_task_proposals"], plan_hash(read_task(self.tasks_root, task_id)["plan"]))
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
             else:
                 if not self._validate_result(task_id, response):
                     raise ValueError("Implementation needs a validation report")
-                after = self._change_snapshot()
+                after = self._change_snapshot(code_root)
                 changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
                 if not changed:
                     raise RuntimeError("Agent finished, but no project code change was detected")
-                task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"])
+                task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"], commit_message=response.get("commit_message", ""))
                 report_number = task["reports"][-1]["number"]
                 append_chat(self.tasks_root, task_id, "result", "system", f"実装と検証を実行し、レポート {report_number} を追加しました。変更ファイル: {', '.join(changed)}\n\n{response['message']}", report_number=report_number)
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
@@ -229,7 +275,7 @@ class AgentManager:
                     write_text(path, content)
             if writes_code:
                 previous_files = read_task(self.tasks_root, task_id)["implementation"]["changed_files"]
-                after = self._change_snapshot() if before is not None else {}
+                after = self._change_snapshot(code_root) if before is not None else {}
                 changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path)) if before is not None else []
                 set_implementation(self.tasks_root, task_id, "failed", sorted(set(previous_files) | set(changed)), run["provider"], run["model"], "inconclusive", True)
                 append_chat(self.tasks_root, task_id, "result", "system", f"実装または検証に失敗しました: {error}")
@@ -259,6 +305,7 @@ class AgentManager:
         else:
             instructions = (
                 "02 検証結果チャットです。依頼が検証だけならコードを変更せず、修正が必要ならコードを直して再検証してください。"
+                "コードを変更した場合は、JSONのcommit_messageに簡潔な日本語のコミットメッセージ案を書いてください。"
                 "新しい結果が得られた場合は、今回分だけの独立したレポートを report-draft.md に書いてください。"
                 "過去のレポートは編集しないでください。結果がまだない場合はレポートを書かず、チャットで理由を説明してください。"
             )
@@ -269,7 +316,7 @@ class AgentManager:
             f"{'plan.md' if phase == 'plan' else 'report-draft.md'} を必要に応じて更新し、指定のJSON Schemaで短く返してください。"
             "ほかのタスクは変更しないでください。Gitコミットとマージは行わないでください。\n"
             f"タスク: {task['title']}\n画面: {phase}\n"
-            f"タスク保存先: {task_dir(self.tasks_root, task_id)}\n開発コードの場所: {self.project_root}\n"
+            f"タスク保存先: {task_dir(self.tasks_root, task_id)}\n開発コードの場所: {self.workflow.code_path(task_id) if self.workflow and task['project_id'] else self.project_root}\n"
             f"保存済みの計画:\n{task['plan']}\n最新のレポート:\n{task['result']}\n"
             f"検証資料フォルダ: {task_dir(self.tasks_root, task_id) / 'evidence'}\n"
             f"検証資料: {json.dumps(evidence, ensure_ascii=False)}\n"
@@ -284,11 +331,25 @@ class AgentManager:
             "コード変更後、そのまま計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.md、"
             "検証用スクリプトはvalidation/、画像・動画・測定データはevidence/に保存してください。"
             "生成した画像は自分で開いて体裁を確認し、内容の解釈をreport-draft.mdに書いてください。"
+            "JSONのcommit_messageに今回の変更を表す簡潔な日本語のコミットメッセージ案を書いてください。"
             "この実行はタスクの完了判断ではありません。Gitコミットやマージは行わないでください。"
             "計画を変更する必要が生じた場合は作業を止め、理由を返答してください。"
             "検証で仮説が支持されない場合も観測結果を残し、指定のJSON Schemaで結論を返してください。\n"
             f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md、assets/result-template.md を読んでください。\n"
             f"タスク: {task['title']}\nタスク保存先: {task_dir(self.tasks_root, task_id)}\n計画:\n{task['plan']}"
+        )
+
+    def _summary_prompt(self, task_id: str) -> str:
+        """Build a read-only summary prompt for a parent task ID."""
+        task = read_task(self.tasks_root, task_id)
+        children = [read_task(self.tasks_root, child["id"]) for child in self.workflow.children(task_id)]
+        details = "\n".join(f"{child['title']} / report={child['reports'][-1]['number'] if child['reports'] else 'なし'} / commit={child['merge_hash'] or child['commit_hash']} / result={child['result']}" for child in children)
+        return (
+            "日本語で子タスクの結果を総括してください。コードとGitは変更しません。"
+            "子タスクの資料リンクを親タスクの資料としてコピーせず、子タスク名とレポート番号で根拠を示してください。"
+            f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md を読んでください。"
+            f"総括を {report_draft_path(self.tasks_root, task_id)} に保存し、検証用JSON Schemaで返してください。"
+            f"親タスク: {task['title']}\n計画: {task['plan']}\n分割前のcommit: {task['pre_split_commit']}\n分割前の検証: {task['result']}\n子タスク:\n{details}"
         )
 
     def _validate_result(self, task_id: str, response: dict) -> bool:
@@ -299,6 +360,8 @@ class AgentManager:
             or response.get("outcome") not in {"supported", "not_supported", "inconclusive"}
             or not isinstance(response.get("needs_followup"), bool)
             or "questions" in response
+            or not valid_proposals(response.get("child_task_proposals", []))
+            or not isinstance(response.get("commit_message", ""), str)
         ):
             raise ValueError("Agent returned an invalid validation response")
         files = response.get("evidence_files")
@@ -307,15 +370,16 @@ class AgentManager:
             raise ValueError("Agent referenced a missing evidence file")
         return bool(report_draft_path(self.tasks_root, task_id).read_text(encoding="utf-8").strip())
 
-    def _change_snapshot(self) -> dict[str, str]:
-        """Return hashes of changed and untracked project files for comparison."""
+    def _change_snapshot(self, code_root: Path | None = None) -> dict[str, str]:
+        """Return hashes of changed and untracked files under code_root."""
+        code_root = code_root or self.project_root
         commands = (["git", "diff", "--name-only", "HEAD", "-z"], ["git", "ls-files", "--others", "--exclude-standard", "-z"])
         paths = set()
         for command in commands:
-            output = subprocess.run(command, cwd=self.project_root, capture_output=True, check=True).stdout
+            output = subprocess.run(command, cwd=code_root, capture_output=True, check=True).stdout
             paths.update(item.decode("utf-8") for item in output.split(b"\0") if item)
         snapshot = {}
         for name in paths:
-            path = self.project_root / name
+            path = code_root / name
             snapshot[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "deleted"
         return snapshot
