@@ -43,10 +43,11 @@ class Handler(BaseHTTPRequestHandler):
         """Add the task's current display status and return its API record."""
         with AGENT.lock:
             active = task["id"] in AGENT.active_tasks
+            active_run_id = next((run_id for run_id, run in AGENT.runs.items() if run["task_id"] == task["id"] and run["state"] == "running"), None)
         full_task = task if "plan" in task else read_task(TASKS_ROOT, task["id"])
         children = WORKFLOW.children(task["id"])
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
-        return {**task, "child_proposals": proposals, "active": active, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
+        return {**task, "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
 
     def present_project(self, project: dict) -> dict:
         """Add task counts to project and return its API record."""

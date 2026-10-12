@@ -42,6 +42,16 @@ function renderAgentProgress() {
     title.textContent = 'Agentが作業中';
     description.textContent = '作業が終わるとタスクの表示が更新されます。';
   }
+  const activity = run?.activity || [];
+  const running = [...activity].reverse().find((item) => item.state === 'running');
+  if (running) description.textContent = `現在実行中: ${running.label}`;
+  const list = $('#agent-progress-activity');
+  list.replaceChildren(...activity.slice(-5).reverse().map((item) => {
+    const row = document.createElement('li');
+    row.className = `agent-activity-${item.state}`;
+    row.textContent = `${item.state === 'running' ? '実行中' : item.state === 'failed' ? '失敗' : '完了'} · ${item.label}`;
+    return row;
+  }));
 }
 
 function setChatHeight(height) {
@@ -634,7 +644,11 @@ async function pollRun(runId, taskId) {
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     const run = await api(`/api/runs/${runId}`);
-    if (run.state === 'running') continue;
+    if (run.state === 'running') {
+      state.activeRuns.set(taskId, run);
+      if (state.task?.id === taskId) renderAgentProgress();
+      continue;
+    }
     state.activeRuns.delete(taskId);
     await refreshTasks();
     if (state.task?.id === taskId) {
@@ -699,6 +713,9 @@ async function selectTask(id) {
   state.messages = [];
   state.evidence = [];
   render();
+  if (state.task.active_run_id && !state.activeRuns.has(id)) {
+    try { watchRun(await api(`/api/runs/${state.task.active_run_id}`)); } catch { /* The run may have just finished. */ }
+  }
   try { await Promise.all([loadChat(), loadEvidence()]); } catch { toast('タスク資料を読み込めません。サーバーを再起動してください'); }
 }
 

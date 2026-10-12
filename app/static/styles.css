@@ -537,6 +537,12 @@ button:disabled {
 }
 .agent-progress strong { font-size:14px }
 .agent-progress p { margin:5px 0 0; color:#b2d4b7; font-size:11px; line-height:1.6 }
+.agent-progress-content { min-width:0; flex:1 }
+.agent-progress p, .agent-progress-activity li { overflow-wrap:anywhere; white-space:pre-wrap }
+.agent-progress-activity { margin:10px 0 0; padding:8px 0 0 18px; border-top:1px solid #48644b; color:#b2d4b7; font-size:11px; line-height:1.6 }
+.agent-progress-activity li { margin:3px 0 }
+.agent-activity-running { color:#e2f4e4 }
+.agent-activity-failed { color:#ffc4b8 }
 @keyframes agent-progress-spin { to { transform:rotate(360deg) } }
 @media(prefers-reduced-motion:reduce) { .agent-progress-spinner { animation:none } }
 .content-column {
