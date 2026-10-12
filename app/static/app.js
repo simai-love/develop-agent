@@ -3,6 +3,7 @@ import { renderMarkdown } from './markdown.mjs';
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
 const chatHeightStorageKey = 'develop-agent.chat-height';
+const projectCollapseStoragePrefix = 'develop-agent.project-collapsed.';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
 const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
@@ -176,7 +177,7 @@ function renderTree() {
     if (!children.has(key)) children.set(key, []);
     children.get(key).push(task);
   }
-  const appendTask = (task, depth) => {
+  const appendTask = (task, depth, container) => {
     const item = document.createElement('div');
     item.className = 'tree-item';
     item.style.paddingLeft = `${Math.min(depth, 8) * 12}px`;
@@ -218,12 +219,30 @@ function renderTree() {
     remove.disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
     remove.addEventListener('click', () => openDelete(task.id));
     item.append(row, add, remove);
-    tree.append(item);
-    for (const child of children.get(task.id) || []) appendTask(child, depth + 1);
+    container.append(item);
+    for (const child of children.get(task.id) || []) appendTask(child, depth + 1, container);
   };
   for (const project of state.projects) {
     const item = document.createElement('div');
     item.className = 'tree-item project-item';
+    const storageKey = `${projectCollapseStoragePrefix}${project.id}`;
+    const collapsed = window.localStorage.getItem(storageKey) === 'true';
+    const tasks = document.createElement('div');
+    tasks.id = `project-tasks-${project.id}`;
+    tasks.className = 'project-tasks';
+    tasks.hidden = collapsed;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'tree-action project-toggle';
+    toggle.textContent = collapsed ? '▸' : '▾';
+    toggle.title = `プロジェクト「${project.name}」のタスクを${collapsed ? '開く' : '閉じる'}`;
+    toggle.setAttribute('aria-label', toggle.title);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-controls', tasks.id);
+    toggle.addEventListener('click', () => {
+      window.localStorage.setItem(storageKey, String(!collapsed));
+      renderTree();
+    });
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `tree-row project-row${state.project?.id === project.id ? ' selected' : ''}`;
@@ -262,11 +281,11 @@ function renderTree() {
     remove.setAttribute('aria-label', remove.title);
     remove.disabled = state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task));
     remove.addEventListener('click', () => deleteProject(project.id));
-    item.append(row, add, rename, remove);
-    tree.append(item);
+    item.append(toggle, row, add, rename, remove);
+    tree.append(item, tasks);
     for (const task of children.get('root') || []) {
       if (task.project_id !== project.id) continue;
-      appendTask(task, 1);
+      appendTask(task, 1, tasks);
     }
   }
 }
