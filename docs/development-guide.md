@@ -25,7 +25,7 @@ flowchart LR
 
 | 要素 | 入力 | 出力・保存上の責務 |
 | --- | --- | --- |
-| `app/static/index.html`・`app.js`・`styles.css` | 操作、API 応答 | 画面表示、操作要求。一時的な選択・編集中内容・実行表示はブラウザ側。チャット欄の高さと左の一覧の開閉状態は `localStorage`。 |
+| `app/static/index.html`・`app.js`・`styles.css` | 操作、API 応答 | 画面表示、操作要求。一時的な選択・編集中内容・実行表示はブラウザ側。チャット欄の高さは `localStorage`。 |
 | `app/server.py` | HTTP 要求 | JSON と静的ファイルを返す。`display_status` と実行 ID を応答に付ける。 |
 | `app/workflow.py` | 承認済みの作成・完了要求 | プロジェクト・タスクの状態、Git 操作記録、ブランチ予約を更新。 |
 | `app/agent.py`・`app/agent_stream.py` | 計画・実装・02・総括の要求、CLI イベント | CLI を起動し、チャット・レポート・実装状態を更新。実行中の進捗はサーバー内メモリ。 |
