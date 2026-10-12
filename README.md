@@ -42,6 +42,7 @@ Codex CLIが見つからない場合は、チャットと実装ボタンは利�
 - [`scripts/`](scripts/README.md): 起動手順
 - [`tests/`](tests/README.md): 動作確認
 - [`.codex/skills/`](.codex/skills/README.md): スキル一覧
+- [`.codex/skills/document-writing/`](.codex/skills/document-writing/README.md): 文書の構成設計・執筆スキル
 - [`.codex/skills/research-workflow/`](.codex/skills/research-workflow/README.md): 計画・検証スキル
 - [`.codex/skills/research-workflow/agents/`](.codex/skills/research-workflow/agents/README.md): Codex 表示設定
 - [`.codex/skills/research-workflow/references/`](.codex/skills/research-workflow/references/README.md): 画面別の Agent 指示
