@@ -55,9 +55,17 @@ class ProjectWorkflowTest(unittest.TestCase):
                 write_text(report_draft_path(service.tasks_root, child["id"]), f"# 検証 {index}\n")
                 append_report(service.tasks_root, child["id"], "supported", [code.name], [], "codex", "test", False)
                 preview = service.completion_preview(child["id"])
+                if index == 1:
+                    with self.assertRaisesRegex(ValueError, "コミットメッセージ"):
+                        service.complete_task(child["id"], {**preview, "message": "  "})
+                    preview["message"] = "  子Aの編集済みメッセージ  "
                 service.complete_task(child["id"], preview)
-                self.assertTrue(read_task(service.tasks_root, child["id"])["commit_hash"])
+                commit_hash = read_task(service.tasks_root, child["id"])["commit_hash"]
+                self.assertTrue(commit_hash)
                 self.assertIn(f"+feature {index}", service.task_diff(child["id"], code.name)["patch"])
+                if index == 1:
+                    subject = service.git.git("show", "-s", "--format=%s", commit_hash).stdout.strip()
+                    self.assertEqual(subject, "子Aの編集済みメッセージ")
                 if index == 1:
                     task = read_task(service.tasks_root, child["id"])
                     task.update(status="verifying", commit_hash=None, completed_at=None)
