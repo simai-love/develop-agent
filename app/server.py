@@ -219,7 +219,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/projects/") and "/" not in path.removeprefix("/api/projects/"):
             try:
                 body = self.read_json()
-                self.send_json(200, self.present_project(WORKFLOW.rename_legacy_branch(path.removeprefix("/api/projects/"), body["slug"])))
+                project_id = path.removeprefix("/api/projects/")
+                if set(body) == {"name"}:
+                    project = WORKFLOW.rename_project(project_id, body["name"])
+                elif set(body) == {"slug"}:
+                    project = WORKFLOW.rename_legacy_branch(project_id, body["slug"])
+                else:
+                    raise ValueError("更新するプロジェクト項目を指定してください")
+                self.send_json(200, self.present_project(project))
             except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
                 self.send_json(400, {"error": str(error)})
             return

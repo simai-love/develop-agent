@@ -1166,9 +1166,12 @@ dialog input:focus {
 }
 .project-row {
   width: 100%;
-  margin-top: 10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
   font-weight: 700;
 }
+.project-item { margin-top:10px }
 
 .proposal-card {
   display: grid;
