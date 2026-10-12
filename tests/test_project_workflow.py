@@ -80,9 +80,18 @@ class ProjectWorkflowTest(unittest.TestCase):
             self.assertEqual(read_task(service.tasks_root, parent_id)["reports"][-1]["kind"], "summary")
             service.complete_task(parent_id, service.completion_preview(parent_id))
             self.assertTrue(read_task(service.tasks_root, parent_id)["merge_hash"])
+            second_root = service.create_root_task(project["id"], "別のタスク")
+            self.assertIsNone(second_root["parent_id"])
+            self.assertEqual(service.branch_for(second_root["id"]), project["branch"])
+            service.claim_code(second_root["id"])
+            (service.code_path(second_root["id"]) / "feature3.txt").write_text("feature 3\n", encoding="utf-8")
+            write_text(report_draft_path(service.tasks_root, second_root["id"]), "# 追加タスクの検証\n")
+            append_report(service.tasks_root, second_root["id"], "supported", ["feature3.txt"], [], "codex", "test", False)
+            service.complete_task(second_root["id"], service.completion_preview(second_root["id"]))
             service.complete_project(project["id"], service.project_preview(project["id"]))
             self.assertEqual((repo / "feature1.txt").read_text(), "feature 1\n")
             self.assertEqual((repo / "feature2.txt").read_text(), "feature 2\n")
+            self.assertEqual((repo / "feature3.txt").read_text(), "feature 3\n")
             self.assertEqual(service.git.git("rev-list", "--parents", "-n", "1", "dev").stdout.count(" "), 2)
 
     def test_legacy_migration_keeps_task_ids_and_is_repeatable(self):

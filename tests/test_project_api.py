@@ -50,13 +50,19 @@ class ProjectApiTest(unittest.TestCase):
                 with urlopen(base + "/api/projects") as response:
                     self.assertEqual(json.load(response)[0]["name"], "新しい検証名")
                 task_id = project["first_task_id"]
+                request = Request(base + f"/api/projects/{project['id']}/tasks", data=json.dumps({"title": "追加タスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                with urlopen(request) as response:
+                    root_task = json.load(response)
+                self.assertIsNone(root_task["parent_id"])
+                self.assertEqual(root_task["project_id"], project["id"])
+                self.assertEqual(workflow.branch_for(root_task["id"]), branch)
                 request = Request(base + f"/api/tasks/{task_id}/children", data=json.dumps({"title": "子タスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     child = json.load(response)
                 with urlopen(base + "/api/tasks") as response:
                     tasks = json.load(response)
                 self.assertEqual(child["parent_id"], task_id)
-                self.assertEqual(len(tasks), 2)
+                self.assertEqual(len(tasks), 3)
                 self.assertEqual(workflow.branch_for(child["id"]), f"task/{task_id}")
             finally:
                 http.shutdown()

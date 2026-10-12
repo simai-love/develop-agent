@@ -139,6 +139,18 @@ class WorkflowService:
                 self.git.remove(branch)
                 raise
 
+    def create_root_task(self, project_id: str, title: str) -> dict:
+        """Add a top-level task to project_id and return its record."""
+        with self.lock:
+            project = read_project(self.projects_root, project_id)
+            if project.get("needs_review"):
+                raise ValueError("移行前のGit変更を確認してください")
+            if project["status"] == "completed":
+                raise ValueError("完了したプロジェクトにはタスクを追加できません")
+            if self.agent and self.agent.active_tasks:
+                raise ValueError("Agentの実行が終わってからタスクを作成してください")
+            return create_task(self.tasks_root, title, project_id=project_id)
+
     def create_child(self, parent_id: str, title: str, initial_plan: str = "", proposal_id: str | None = None) -> dict:
         """Create a child under parent_id and return its task record."""
         with self.lock:
