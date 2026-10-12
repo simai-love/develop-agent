@@ -28,6 +28,12 @@ button:disabled {
   grid-template-columns:300px minmax(0,1fr);
   min-height:100vh
 }
+.app-shell.sidebar-collapsed {
+  grid-template-columns:minmax(0,1fr)
+}
+.app-shell.sidebar-collapsed .sidebar {
+  display:none
+}
 .sidebar {
   background:#151916;
   border-right:1px solid #2b302b;
@@ -257,7 +263,23 @@ button:disabled {
 }
 .topbar-path {
   display:flex;
-  gap:12px
+  align-items:center;
+  gap:12px;
+  min-width:0
+}
+.sidebar-toggle {
+  flex:none;
+  width:30px;
+  height:30px;
+  border:1px solid #3f5140;
+  border-radius:6px;
+  background:#202a22;
+  color:#b7d7ba;
+  font-size:15px;
+  line-height:1
+}
+.sidebar-toggle:hover {
+  background:#303a31
 }
 .home-button {
   border:0;
@@ -269,7 +291,7 @@ button:disabled {
 .home-button:hover {
   color:#d0f4d2;
 }
-.topbar-path span {
+.topbar-path>span {
   color:#4c5a4e
 }
 .topbar-path strong {

@@ -9,7 +9,7 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar" aria-label="タスク一覧">
+    <aside id="sidebar" class="sidebar" aria-label="タスク一覧">
       <div class="brand"><span class="brand-mark">◈</span><span>DEVELOP<span class="brand-light">/AGENT</span></span></div>
       <div class="workspace-label">WORKSPACE <span class="local-badge">LOCAL</span></div>
       <div class="sidebar-head"><h2>プロジェクト</h2><button id="add-root" class="icon-button" title="新しいプロジェクト" aria-label="新しいプロジェクト">＋</button></div>
@@ -18,7 +18,7 @@
     </aside>
 
     <main class="main-area">
-      <header class="topbar"><div class="topbar-path"><button id="home-button" class="home-button" aria-label="ホームへ戻る">⌂ ホーム</button><span>/</span> <strong id="breadcrumb">概要</strong></div><div class="topbar-right">RESEARCH & DEVELOPMENT <span class="topbar-separator"></span><span id="clock"></span></div></header>
+      <header class="topbar"><div class="topbar-path"><button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="左の一覧を閉じる" title="左の一覧を閉じる"><span aria-hidden="true">☰</span></button><button id="home-button" class="home-button" aria-label="ホームへ戻る">⌂ ホーム</button><span>/</span> <strong id="breadcrumb">概要</strong></div><div class="topbar-right">RESEARCH & DEVELOPMENT <span class="topbar-separator"></span><span id="clock"></span></div></header>
       <div id="empty-view" class="empty-view">
         <div class="eyebrow">RESEARCH WORKSPACE / 01</div>
         <div class="empty-orbit"><span>✳</span></div>

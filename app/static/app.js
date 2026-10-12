@@ -3,11 +3,31 @@ import { renderMarkdown } from './markdown.mjs';
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
 const chatHeightStorageKey = 'develop-agent.chat-height';
+const sidebarStorageKey = 'develop-agent.sidebar-collapsed';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
 const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
+
+function setSidebarCollapsed(collapsed) {
+  /** Apply collapsed to the sidebar and persist the resulting visibility. */
+  $('.app-shell').classList.toggle('sidebar-collapsed', collapsed);
+  const toggle = $('#sidebar-toggle');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  const label = collapsed ? '左の一覧を開く' : '左の一覧を閉じる';
+  toggle.setAttribute('aria-label', label);
+  toggle.title = label;
+  window.localStorage.setItem(sidebarStorageKey, String(collapsed));
+}
+
+function bindSidebarToggle() {
+  /** Restore sidebar visibility and bind its toggle button; return nothing. */
+  setSidebarCollapsed(window.localStorage.getItem(sidebarStorageKey) === 'true');
+  $('#sidebar-toggle').addEventListener('click', () => {
+    setSidebarCollapsed(!$('.app-shell').classList.contains('sidebar-collapsed'));
+  });
+}
 
 function isTaskBusy(task) {
   /** Return whether the selected task has a running Agent request. */
@@ -1119,6 +1139,7 @@ function bindEvents() {
 
 async function main() {
   /** Initialize the local workspace; return when its first view is ready. */
+  bindSidebarToggle();
   bindChatResize();
   bindEvents();
   setInterval(() => refreshUntrackedRun().catch(() => {}), 1500);
