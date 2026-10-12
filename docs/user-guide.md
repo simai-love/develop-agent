@@ -18,7 +18,7 @@ flowchart LR
   G --> H[プロジェクト完了]
 ```
 
-ブランチの仕組みは[システム設計](architecture.md)を参照してください。
+ブランチの仕組みは[システム設計](development-guide.md)を参照してください。
 
 ## このアプリでできること
 
@@ -119,7 +119,7 @@ flowchart LR
 
 **前提状態:** タスクの詳細画面を開いています。**操作:** 「記録の保存先と変更内容」を開きます。**表示結果:** `tasks/<id>/` の場所と、実装・追加修正で変更したファイルが表示されます。**保存される記録:** この表示操作自体は記録を変更しません。
 
-`tasks/<id>/plan.md` は計画、`reports/` は番号付きの検証結果と総括、`evidence/` は画像・動画・測定データ、`chat_plan.json` と `chat_result.json` は会話です。`projects/<id>/` はプロジェクトの状態と Git 操作の記録です。`tasks/` と `projects/` は端末内の作業記録として Git 管理から除外され、実装したコードは作業ブランチで管理されます。詳細は[システム設計](architecture.md)を参照してください。
+`tasks/<id>/plan.md` は計画、`reports/` は番号付きの検証結果と総括、`evidence/` は画像・動画・測定データ、`chat_plan.json` と `chat_result.json` は会話です。`projects/<id>/` はプロジェクトの状態と Git 操作の記録です。`tasks/` と `projects/` は端末内の作業記録として Git 管理から除外され、実装したコードは作業ブランチで管理されます。詳細は[システム設計](development-guide.md)を参照してください。
 
 ## 操作上の制約と困ったとき
 

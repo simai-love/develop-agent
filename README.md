@@ -23,8 +23,8 @@ bash scripts/run.sh
 | 読む人・目的 | 文書 | 分かること |
 | --- | --- | --- |
 | 初めて画面を使う人 | [利用ガイド](docs/user-guide.md) | 作成、01 計画、実装、02 検証、完了、記録確認の操作順 |
-| 保存先や実装のつながりを調べる開発者 | [システム設計](docs/architecture.md) | 画面、API、記録、Git 連携の構成 |
-| 階層タスクと Git 連携の検討経緯を読む開発者 | [階層と Git 連携の提案](docs/project-task-git-proposal.md) | 設計時の要件、選択肢、実装方針 |
+| 実装経路と更新先を調べる開発者 | [開発・システム設計ガイド](docs/development-guide.md) | 画面、API、保存、Git、変更先と検証方法 |
+| Agent の作業規則を調べる人 | [研究開発スキルの説明](.codex/skills/research-workflow/README.md)・[手順本文](.codex/skills/research-workflow/SKILL.md) | 01・実装・02 と GUI の担当 |
 
 利用ガイドには操作に対応する画面例を掲載しています。画像の再現条件は[画面例の説明](docs/screenshots/README.md)で確認できます。
 
