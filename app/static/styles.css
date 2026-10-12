@@ -116,6 +116,16 @@ button:disabled {
   align-items:center;
   min-width:0
 }
+.project-tasks {
+  display:contents
+}
+.project-tasks[hidden] {
+  display:none
+}
+.project-toggle {
+  color:#a9dea9;
+  font-size:17px
+}
 .tree-row {
   display:flex;
   align-items:center;
