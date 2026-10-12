@@ -175,52 +175,50 @@ function renderTree() {
     if (!children.has(key)) children.set(key, []);
     children.get(key).push(task);
   }
-  const append = (parentId, depth) => {
-    for (const task of children.get(parentId) || []) {
-      const item = document.createElement('div');
-      item.className = 'tree-item';
-      item.style.paddingLeft = `${Math.min(depth, 8) * 12}px`;
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = `tree-row${state.task?.id === task.id ? ' selected' : ''}`;
-      const status = taskStatus(task);
-      row.title = `${task.title}：${status.label}（${status.detail}）`;
-      const label = document.createElement('span');
-      label.className = 'tree-text';
-      label.textContent = task.title;
-      const statusBadge = document.createElement('span');
-      statusBadge.className = `tree-status ${status.key}`;
-      statusBadge.textContent = status.label;
-      const statusDetail = document.createElement('span');
-      statusDetail.className = 'tree-status-detail';
-      statusDetail.textContent = status.detail;
-      const summary = document.createElement('span');
-      summary.className = 'tree-summary';
-      const meta = document.createElement('span');
-      meta.className = 'tree-meta';
-      meta.append(statusBadge, statusDetail);
-      summary.append(label, meta);
-      row.append(summary);
-      row.addEventListener('click', () => selectTask(task.id));
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'tree-action';
-      add.textContent = '＋';
-      add.title = `「${task.title}」に子タスクを追加`;
-      add.setAttribute('aria-label', add.title);
-      add.addEventListener('click', () => openCreate(task.id));
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'tree-action delete';
-      remove.textContent = '×';
-      remove.title = `「${task.title}」を削除`;
-      remove.setAttribute('aria-label', remove.title);
-      remove.disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
-      remove.addEventListener('click', () => openDelete(task.id));
-      item.append(row, add, remove);
-      tree.append(item);
-      append(task.id, depth + 1);
-    }
+  const appendTask = (task, depth) => {
+    const item = document.createElement('div');
+    item.className = 'tree-item';
+    item.style.paddingLeft = `${Math.min(depth, 8) * 12}px`;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `tree-row${state.task?.id === task.id ? ' selected' : ''}`;
+    const status = taskStatus(task);
+    row.title = `${task.title}：${status.label}（${status.detail}）`;
+    const label = document.createElement('span');
+    label.className = 'tree-text';
+    label.textContent = task.title;
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `tree-status ${status.key}`;
+    statusBadge.textContent = status.label;
+    const statusDetail = document.createElement('span');
+    statusDetail.className = 'tree-status-detail';
+    statusDetail.textContent = status.detail;
+    const summary = document.createElement('span');
+    summary.className = 'tree-summary';
+    const meta = document.createElement('span');
+    meta.className = 'tree-meta';
+    meta.append(statusBadge, statusDetail);
+    summary.append(label, meta);
+    row.append(summary);
+    row.addEventListener('click', () => selectTask(task.id));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'tree-action';
+    add.textContent = '＋';
+    add.title = `「${task.title}」に子タスクを追加`;
+    add.setAttribute('aria-label', add.title);
+    add.addEventListener('click', () => openCreate(task.id));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'tree-action delete';
+    remove.textContent = '×';
+    remove.title = `「${task.title}」を削除`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
+    remove.addEventListener('click', () => openDelete(task.id));
+    item.append(row, add, remove);
+    tree.append(item);
+    for (const child of children.get(task.id) || []) appendTask(child, depth + 1);
   };
   for (const project of state.projects) {
     const item = document.createElement('div');
@@ -228,7 +226,16 @@ function renderTree() {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `tree-row project-row${state.project?.id === project.id ? ' selected' : ''}`;
-    row.textContent = `▣ ${project.name} (${project.completed_count}/${project.task_count})`;
+    const projectName = document.createElement('span');
+    projectName.className = 'tree-text';
+    projectName.textContent = `▣ ${project.name} (${project.completed_count}/${project.task_count})`;
+    row.append(projectName);
+    if (state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task))) {
+      const running = document.createElement('span');
+      running.className = 'tree-status running';
+      running.textContent = '実行中';
+      row.append(running);
+    }
     row.title = project.branch;
     row.addEventListener('click', () => selectProject(project.id));
     const rename = document.createElement('button');
@@ -250,17 +257,7 @@ function renderTree() {
     tree.append(item);
     for (const task of children.get('root') || []) {
       if (task.project_id !== project.id) continue;
-      const rootItem = document.createElement('div');
-      rootItem.className = 'tree-item';
-      rootItem.style.paddingLeft = '12px';
-      const rootRow = document.createElement('button');
-      rootRow.type = 'button';
-      rootRow.className = `tree-row${state.task?.id === task.id ? ' selected' : ''}`;
-      rootRow.textContent = task.title;
-      rootRow.addEventListener('click', () => selectTask(task.id));
-      rootItem.append(rootRow);
-      tree.append(rootItem);
-      append(task.id, 2);
+      appendTask(task, 1);
     }
   }
 }
