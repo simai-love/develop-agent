@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 
-from app.git.workspace import GitWorkspace
+from app.git.workspace import GitWorkspace, task_branch_name
 from app.projects import list_projects, new_project, project_dir, read_project, save_project
 from app.storage import create_task, delete_task as remove_task_records, list_tasks, mark_task_completed, now, plan_hash, read_task, save_metadata, task_dir, task_subtree, update_child_proposal, write_text
 
@@ -42,6 +42,43 @@ class WorkflowService:
     def code_path(self, task_id: str) -> Path:
         """Return the code worktree for task_id."""
         return self.git.ensure(self.branch_for(task_id))
+
+    def task_diff(self, task_id: str, path: str | None = None) -> dict:
+        """Return task changed paths and an optional per-file patch for task_id."""
+        task = read_task(self.tasks_root, task_id)
+        worktree = None
+        if task["merge_hash"]:
+            revisions = (f"{task['merge_hash']}^1", task["merge_hash"])
+        elif self.children(task_id):
+            branch = self.branch_for(task_id)
+            parent = task["parent_id"]
+            target = self.branch_for(parent) if parent else read_project(self.projects_root, task["project_id"])["branch"]
+            revisions = (f"{target}...{branch}",)
+        elif task["commit_hash"] and task["status"] == "completed":
+            revisions = (f"{task['commit_hash']}^", task["commit_hash"])
+        elif task["status"] == "completed":
+            revisions = ()
+        else:
+            branch = self.branch_for(task_id)
+            project = read_project(self.projects_root, task["project_id"])
+            if project.get("branch_owners", {}).get(branch) != task_id:
+                revisions = ()
+            else:
+                worktree = self.git.ensure(branch)
+                revisions = ("HEAD",)
+        if worktree:
+            files = self.git.changed(worktree)
+        elif revisions:
+            files = self.git.diff_files(*revisions)
+        else:
+            files = []
+        result = {"files": files}
+        if path is not None:
+            if path not in files:
+                raise ValueError("このタスクの変更ファイルではありません")
+            untracked = worktree is not None and path in self.git.untracked(worktree)
+            result["patch"] = self.git.diff_text(path, *revisions, cwd=worktree, untracked=untracked)
+        return result
 
     def claim_code(self, task_id: str) -> None:
         """Reserve a branch for task_id until its changes are committed."""
@@ -184,7 +221,7 @@ class WorkflowService:
                     raise ValueError("別タスクがこのブランチで作業中です")
                 if project_owner == parent_id:
                     self.release_code(parent_id)
-                branch = f"task/{parent_id}"
+                branch = task_branch_name(parent["title"], parent_id)
                 self.git.ensure(branch, owner_branch)
             child_id = uuid4().hex[:12]
             try:
@@ -372,7 +409,7 @@ class WorkflowService:
             task = read_task(self.tasks_root, task_id)
             children = self.children(task_id)
             if children and task["status"] != "completed" and not task["branch"]:
-                branch = f"task/{task_id}"
+                branch = task_branch_name(task["title"], task_id)
                 self.git.ensure(branch, self.branch_for(task_id))
                 task["branch"] = branch
                 save_metadata(self.tasks_root, task)

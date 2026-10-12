@@ -7,6 +7,7 @@ const chatHeightMin = 260;
 const chatHeightMax = 1000;
 const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
+let diffRequest = 0;
 
 function isTaskBusy(task) {
   /** Return whether the selected task has a running Agent request. */
@@ -279,6 +280,53 @@ function subtreeIds(taskId) {
   return ids;
 }
 
+async function loadTaskDiff() {
+  /** Load changed paths for the selected task and render patches on file expansion. */
+  const taskId = state.task?.id;
+  if (!taskId) return;
+  const request = ++diffRequest;
+  const container = $('#changed-files');
+  container.textContent = '変更内容を読み込み中…';
+  try {
+    const { files } = await api(`/api/tasks/${taskId}/diff`);
+    if (request !== diffRequest || state.task?.id !== taskId) return;
+    container.replaceChildren();
+    if (!files.length) {
+      container.textContent = 'このタスクで確認できるコード差分はまだありません。';
+      return;
+    }
+    for (const path of files) {
+      const details = document.createElement('details');
+      details.className = 'diff-file';
+      const summary = document.createElement('summary');
+      summary.textContent = path;
+      const content = document.createElement('div');
+      details.append(summary, content);
+      details.addEventListener('toggle', async () => {
+        if (!details.open || details.dataset.loaded) return;
+        content.textContent = '差分を読み込み中…';
+        try {
+          const { patch } = await api(`/api/tasks/${taskId}/diff?path=${encodeURIComponent(path)}`);
+          if (state.task?.id !== taskId || !details.isConnected) return;
+          const code = document.createElement('pre');
+          code.className = 'diff-code';
+          for (const line of patch.split('\n')) {
+            const row = document.createElement('span');
+            row.className = line.startsWith('@@') ? 'diff-hunk' : line.startsWith('+') && !line.startsWith('+++') ? 'diff-added' : line.startsWith('-') && !line.startsWith('---') ? 'diff-removed' : 'diff-context';
+            row.textContent = line || ' ';
+            code.append(row);
+          }
+          content.replaceChildren(code);
+          details.dataset.loaded = 'true';
+        } catch (error) { content.textContent = error.message; }
+      });
+      container.append(details);
+    }
+  } catch (error) {
+    if (request === diffRequest) container.textContent = error.message;
+  }
+}
+
 function render() {
   /** Read the selected task and tab, then render the GUI; return nothing. */
   const task = state.task;
@@ -364,9 +412,7 @@ function render() {
   $('#result-actions p').textContent = task.implementation?.validation_outcome
     ? `Agentの検証結果：${outcomeLabels[task.implementation.validation_outcome]}。結果を確認し、目的を達成したと判断したら完了にしてください。`
     : '目的を達成したと判断したら、この開発項目を完了にします。';
-  $('#changed-files').textContent = task.implementation?.changed_files?.length
-    ? `実装と追加修正で変更したファイル：\n${task.implementation.changed_files.join('\n')}`
-    : 'このタスクで確認されたコード変更はまだありません。';
+  if (!$('#details-content').classList.contains('hidden')) loadTaskDiff();
   const dirty = state.drafts.plan !== task.plan;
   $('#save-indicator').textContent = dirty ? '未保存の変更' : '保存済み';
   $('#save-indicator').classList.toggle('dirty', dirty);
@@ -739,6 +785,8 @@ async function selectTask(id) {
   state.planEditing = false;
   state.messages = [];
   state.evidence = [];
+  $('#details-content').classList.add('hidden');
+  $('#details-toggle').setAttribute('aria-expanded', 'false');
   render();
   if (state.task.active_run_id && !state.activeRuns.has(id)) {
     try { watchRun(await api(`/api/runs/${state.task.active_run_id}`)); } catch { /* The run may have just finished. */ }
@@ -1030,6 +1078,7 @@ function bindEvents() {
     const content = $('#details-content');
     content.classList.toggle('hidden');
     $('#details-toggle').setAttribute('aria-expanded', String(!content.classList.contains('hidden')));
+    if (!content.classList.contains('hidden')) loadTaskDiff();
   });
   window.addEventListener('beforeunload', (event) => { if (hasChanges()) event.preventDefault(); });
 }

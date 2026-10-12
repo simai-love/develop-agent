@@ -86,6 +86,14 @@ class Handler(BaseHTTPRequestHandler):
             except (FileNotFoundError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
+        if path.startswith("/api/tasks/") and path.endswith("/diff"):
+            try:
+                task_id = path.removeprefix("/api/tasks/").removesuffix("/diff")
+                selected_path = parse_qs(parsed.query).get("path", [None])[0]
+                self.send_json(200, WORKFLOW.task_diff(task_id, selected_path))
+            except (FileNotFoundError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path.startswith("/api/tasks/") and "/evidence" in path:
             parts = path.strip("/").split("/")
             try:

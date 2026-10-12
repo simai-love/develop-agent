@@ -8,6 +8,12 @@ from pathlib import Path
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
+def task_branch_name(title: str, task_id: str) -> str:
+    """Build a readable task branch from a title and ID; return its Git ref name."""
+    slug = re.sub(r"-+", "-", "".join(char.lower() if char.isalnum() else "-" for char in title)).strip("-")
+    return f"task/{slug[:40].rstrip('-') or 'untitled'}-{task_id}"
+
+
 class GitWorkspace:
     """Operate Git branches and worktrees for a repository."""
 
@@ -64,6 +70,26 @@ class GitWorkspace:
         tracked = subprocess.run(["git", "diff", "--name-only", "HEAD", "-z"], cwd=path, capture_output=True, check=True).stdout
         untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=path, capture_output=True, check=True).stdout
         return sorted({part.decode("utf-8") for part in (tracked + untracked).split(b"\0") if part})
+
+    def untracked(self, path: Path) -> set[str]:
+        """Return untracked file paths in a worktree as a set."""
+        result = self.git("ls-files", "--others", "--exclude-standard", "-z", cwd=path)
+        return {name for name in result.stdout.split("\0") if name}
+
+    def diff_files(self, *revisions: str) -> list[str]:
+        """Return changed paths between Git revisions, preserving unusual names."""
+        result = self.git("diff", "--no-ext-diff", "--name-only", "-z", *revisions)
+        return sorted(name for name in result.stdout.split("\0") if name)
+
+    def diff_text(self, path: str, *revisions: str, cwd: Path | None = None, untracked: bool = False) -> str:
+        """Return a unified patch for path under revisions or an untracked worktree file."""
+        options = ("diff", "--no-ext-diff", "--no-textconv", "--no-color")
+        if untracked:
+            result = self.git(*options, "--no-index", "--", "/dev/null", path, cwd=cwd, check=False)
+            if result.returncode not in (0, 1):
+                raise ValueError(result.stderr.strip() or "差分を取得できません")
+            return result.stdout
+        return self.git(*options, *revisions, "--", path, cwd=cwd).stdout
 
     def clean(self, path: Path) -> bool:
         """Return whether path has no tracked or untracked changes."""

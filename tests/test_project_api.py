@@ -7,6 +7,8 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from app import server
@@ -26,6 +28,7 @@ class ProjectApiTest(unittest.TestCase):
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
             (repo / ".gitignore").write_text("tasks/\nprojects/\n", encoding="utf-8")
+            (repo / "source.py").write_text("old\n", encoding="utf-8")
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=repo, check=True)
             old = (server.PROJECT_ROOT, server.TASKS_ROOT, server.PROJECTS_ROOT, server.WORKFLOW, server.AGENT)
@@ -63,7 +66,20 @@ class ProjectApiTest(unittest.TestCase):
                     tasks = json.load(response)
                 self.assertEqual(child["parent_id"], task_id)
                 self.assertEqual(len(tasks), 3)
-                self.assertEqual(workflow.branch_for(child["id"]), f"task/{task_id}")
+                self.assertEqual(workflow.branch_for(child["id"]), f"task/初回タスク-{task_id}")
+                workflow.claim_code(child["id"])
+                (workflow.code_path(child["id"]) / "change note.txt").write_text("updated\n", encoding="utf-8")
+                (workflow.code_path(child["id"]) / "source.py").write_text("new\n", encoding="utf-8")
+                diff_url = base + f"/api/tasks/{child['id']}/diff"
+                with urlopen(diff_url) as response:
+                    self.assertEqual(json.load(response)["files"], ["change note.txt", "source.py"])
+                with urlopen(diff_url + "?path=" + quote("change note.txt")) as response:
+                    self.assertIn("+updated", json.load(response)["patch"])
+                with urlopen(diff_url + "?path=source.py") as response:
+                    self.assertIn("-old\n+new", json.load(response)["patch"])
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(diff_url + "?path=../README.md")
+                self.assertEqual(error.exception.code, 400)
             finally:
                 http.shutdown()
                 http.server_close()
