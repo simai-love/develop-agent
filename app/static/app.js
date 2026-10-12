@@ -248,19 +248,28 @@ function renderTree() {
     row.className = `tree-row project-row${state.project?.id === project.id ? ' selected' : ''}`;
     const projectName = document.createElement('span');
     projectName.className = 'tree-text';
-    projectName.textContent = `▣ ${project.name} (${project.completed_count}/${project.task_count})`;
-    row.append(projectName);
+    projectName.textContent = `▣ ${project.name}`;
+    const summary = document.createElement('span');
+    summary.className = 'tree-summary';
+    const meta = document.createElement('span');
+    meta.className = 'tree-meta';
+    const progress = document.createElement('span');
+    progress.className = 'tree-status-detail';
+    progress.textContent = `${project.completed_count}/${project.task_count} タスク`;
+    meta.append(progress);
     if (project.status === 'completed') {
       const completed = document.createElement('span');
       completed.className = 'tree-status completed';
       completed.textContent = '完了済み';
-      row.append(completed);
+      meta.append(completed);
     } else if (state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task))) {
       const running = document.createElement('span');
       running.className = 'tree-status running';
       running.textContent = '実行中';
-      row.append(running);
+      meta.append(running);
     }
+    summary.append(projectName, meta);
+    row.append(summary);
     row.title = project.branch;
     row.addEventListener('click', () => selectProject(project.id));
     const add = document.createElement('button');

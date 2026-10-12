@@ -1220,11 +1220,9 @@ dialog input:focus,dialog textarea:focus {
 }
 .project-row {
   width: 100%;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
   font-weight: 700;
 }
+.project-row .tree-meta { font-weight: 400 }
 .project-item { margin-top:10px }
 
 .proposal-card {
