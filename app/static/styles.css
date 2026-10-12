@@ -954,6 +954,34 @@ button:disabled {
   font:11px/1.8 'DM Mono',monospace;
   overflow-wrap:anywhere;
 }
+.diff-file {
+  border:1px solid #344037;
+  border-radius:6px;
+  margin-top:8px;
+  overflow:hidden;
+}
+.diff-file summary {
+  cursor:pointer;
+  padding:8px 10px;
+}
+.diff-file[open] summary {
+  border-bottom:1px solid #344037;
+}
+.diff-code {
+  margin:0;
+  padding:8px 0;
+  overflow:auto;
+  color:#b8c4b9;
+  font:11px/1.5 'DM Mono',monospace;
+}
+.diff-code span {
+  display:block;
+  padding:0 10px;
+  white-space:pre;
+}
+.diff-code .diff-added { background:#203d29; color:#b5efbc; }
+.diff-code .diff-removed { background:#492a2a; color:#f1b9b4; }
+.diff-code .diff-hunk { background:#27343e; color:#b7d5ee; }
 .chat-note {
   border:1px dashed #425147;
   border-radius:8px;

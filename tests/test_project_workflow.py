@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from app.agent import AgentManager
+from app.git.workspace import task_branch_name
 from app.projects import list_projects
 from app.storage import append_report, create_task, plan_hash, read_task, report_draft_path, save_child_proposals, save_metadata, write_text
 from app.workflow import WorkflowService
@@ -15,6 +16,11 @@ from app.workflow import WorkflowService
 
 class ProjectWorkflowTest(unittest.TestCase):
     """Exercise project, child, and parent completion with real Git history."""
+
+    def test_task_branch_name_is_readable_and_safe(self):
+        """Keep a Japanese title readable while removing Git ref separators."""
+        self.assertEqual(task_branch_name(" 画面/表示の改善！ ", "abc123"), "task/画面-表示の改善-abc123")
+        self.assertEqual(task_branch_name("...", "abc123"), "task/untitled-abc123")
 
     def test_child_commits_merge_into_parent_then_dev(self):
         """Build a nested project and check commit and merge outputs."""
@@ -43,11 +49,15 @@ class ProjectWorkflowTest(unittest.TestCase):
                         service.claim_code(second["id"])
                 code = service.code_path(child["id"]) / f"feature{index}.txt"
                 code.write_text(f"feature {index}\n", encoding="utf-8")
+                pending_diff = service.task_diff(child["id"], code.name)
+                self.assertEqual(pending_diff["files"], [code.name])
+                self.assertIn(f"+feature {index}", pending_diff["patch"])
                 write_text(report_draft_path(service.tasks_root, child["id"]), f"# 検証 {index}\n")
                 append_report(service.tasks_root, child["id"], "supported", [code.name], [], "codex", "test", False)
                 preview = service.completion_preview(child["id"])
                 service.complete_task(child["id"], preview)
                 self.assertTrue(read_task(service.tasks_root, child["id"])["commit_hash"])
+                self.assertIn(f"+feature {index}", service.task_diff(child["id"], code.name)["patch"])
                 if index == 1:
                     task = read_task(service.tasks_root, child["id"])
                     task.update(status="verifying", commit_hash=None, completed_at=None)
@@ -78,8 +88,11 @@ class ProjectWorkflowTest(unittest.TestCase):
                 time.sleep(0.02)
             self.assertEqual(manager.get_run(run["id"])["state"], "succeeded")
             self.assertEqual(read_task(service.tasks_root, parent_id)["reports"][-1]["kind"], "summary")
+            self.assertEqual(service.task_diff(first["id"])["files"], ["feature1.txt"])
+            self.assertEqual(service.task_diff(parent_id)["files"], ["feature1.txt", "feature2.txt"])
             service.complete_task(parent_id, service.completion_preview(parent_id))
             self.assertTrue(read_task(service.tasks_root, parent_id)["merge_hash"])
+            self.assertEqual(service.task_diff(parent_id)["files"], ["feature1.txt", "feature2.txt"])
             second_root = service.create_root_task(project["id"], "別のタスク")
             self.assertIsNone(second_root["parent_id"])
             self.assertEqual(service.branch_for(second_root["id"]), project["branch"])
@@ -118,7 +131,7 @@ class ProjectWorkflowTest(unittest.TestCase):
             self.assertEqual(len(list_projects(repo / "projects")), 1)
             self.assertEqual(read_task(repo / "tasks", child["id"])["project_id"], root["id"])
             self.assertEqual(read_task(repo / "tasks", root["id"])["parent_id"], None)
-            self.assertEqual(read_task(repo / "tasks", root["id"])["branch"], f"task/{root['id']}")
+            self.assertEqual(read_task(repo / "tasks", root["id"])["branch"], f"task/旧タスク-{root['id']}")
             renamed = service.rename_legacy_branch(root["id"], "renamed-project")
             self.assertEqual(renamed["branch"], f"project/renamed-project-{root['id'][:6]}")
             interrupted_child = read_task(repo / "tasks", child["id"])
@@ -157,7 +170,7 @@ class ProjectWorkflowTest(unittest.TestCase):
             task = read_task(service.tasks_root, task_id)
             self.assertEqual(task["pre_split_commit"], first)
             self.assertEqual(task["status"], "planning")
-            self.assertEqual(task["branch"], f"task/{task_id}")
+            self.assertEqual(task["branch"], f"task/初回-{task_id}")
 
 
 if __name__ == "__main__":
