@@ -299,6 +299,38 @@ class WorkflowTest(unittest.TestCase):
             self._await_run(manager, manager.start_chat(task["id"], "plan", "別案を検討")["id"])
             self.assertEqual(read_task(tasks, task["id"])["implementation"]["state"], "not_started")
 
+    def test_implementation_stop_shows_reason_in_result_chat(self):
+        """Check a plan mismatch reaches screen 02 without creating a report."""
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            self._init_project(project)
+            tasks = project / "tasks"
+            tasks.mkdir()
+            cli = project / "fake-codex"
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "from pathlib import Path\n"
+                "data = {'message': '関連するREADMEが計画の変更対象に含まれていません', "
+                "'outcome': 'inconclusive', 'evidence_files': [], 'needs_followup': True}\n"
+                "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            task = create_task(tasks, "文書を更新")
+            plan = "# 計画\n対象の文書を更新する"
+            update_task(tasks, task["id"], {"plan": plan})
+            set_readiness(tasks, task["id"], True, plan, "実装可能")
+            manager = AgentManager(tasks, project, str(cli))
+            run = manager.start_implementation(task["id"])
+            self._await_run(manager, run["id"], "failed")
+            message = read_chat(tasks, task["id"], "result")[-1]["content"]
+            self.assertIn("関連するREADMEが計画の変更対象に含まれていません", message)
+            self.assertIn("01 計画", message)
+            self.assertIn("計画書の再生成", message)
+            self.assertNotIn("Implementation needs a validation report", message)
+            self.assertEqual(read_task(tasks, task["id"])["reports"], [])
+
     def test_existing_result_is_kept_as_first_report(self):
         """Read a legacy result and return after checking report migration."""
         with tempfile.TemporaryDirectory() as temporary:

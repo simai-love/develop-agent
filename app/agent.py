@@ -18,6 +18,10 @@ from app.storage import append_chat, append_report, delete_task, list_tasks, pla
 SKILL_ROOT = Path(__file__).resolve().parent.parent / ".codex" / "skills" / "research-workflow"
 
 
+class PlanChangeNeeded(ValueError):
+    """Carry the Agent's reason for stopping before implementation."""
+
+
 def cli_error(events: str) -> str | None:
     """Read CLI JSONL events and return the last reported error, if any."""
     errors = []
@@ -275,10 +279,13 @@ class AgentManager:
                     save_child_proposals(self.tasks_root, task_id, response["child_task_proposals"], plan_hash(read_task(self.tasks_root, task_id)["plan"]))
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
             else:
-                if not self._validate_result(task_id, response):
-                    raise ValueError("Implementation needs a validation report")
+                has_report = self._validate_result(task_id, response)
                 after = self._change_snapshot(code_root)
                 changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+                if not has_report:
+                    if not changed and response["outcome"] == "inconclusive" and response["needs_followup"]:
+                        raise PlanChangeNeeded(response["message"].strip() or "計画の変更が必要です")
+                    raise ValueError("Implementation needs a validation report")
                 if not changed:
                     raise RuntimeError("Agent finished, but no project code change was detected")
                 task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"], commit_message=response.get("commit_message", ""))
@@ -294,13 +301,18 @@ class AgentManager:
                 after = self._change_snapshot(code_root) if before is not None else {}
                 changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path)) if before is not None else []
                 set_implementation(self.tasks_root, task_id, "failed", sorted(set(previous_files) | set(changed)), run["provider"], run["model"], "inconclusive", True)
-                append_chat(self.tasks_root, task_id, "result", "system", f"実装または検証に失敗しました: {error}")
+                message = (
+                    f"実装を停止しました。理由: {error}\n\n01 計画に戻り、Agentに計画書の再生成を依頼してください。"
+                    if isinstance(error, PlanChangeNeeded)
+                    else f"実装または検証に失敗しました: {error}"
+                )
+                append_chat(self.tasks_root, task_id, "result", "system", message)
             else:
                 if phase == "plan" and previous_plan is not None:
                     plan = read_task(self.tasks_root, task_id)["plan"]
                     set_readiness(self.tasks_root, task_id, False, plan, "Agentの計画更新を確認してください", previous_plan)
                 append_chat(self.tasks_root, task_id, phase, "system", f"Agentの実行に失敗しました: {error}")
-            outcome = {"state": "failed", "message": str(error)}
+            outcome = {"state": "failed", "message": message if isinstance(error, PlanChangeNeeded) else str(error)}
         finally:
             output_path.unlink(missing_ok=True)
         with self.lock:
