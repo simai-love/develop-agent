@@ -41,6 +41,14 @@ class ProjectApiTest(unittest.TestCase):
                 request = Request(base + "/api/projects", data=json.dumps({"name": "検証", "slug": "validation", "first_task_title": "初回タスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     project = json.load(response)
+                branch = project["branch"]
+                request = Request(base + f"/api/projects/{project['id']}", data=json.dumps({"name": "新しい検証名"}).encode(), headers={"Content-Type": "application/json"}, method="PATCH")
+                with urlopen(request) as response:
+                    renamed = json.load(response)
+                self.assertEqual(renamed["name"], "新しい検証名")
+                self.assertEqual(renamed["branch"], branch)
+                with urlopen(base + "/api/projects") as response:
+                    self.assertEqual(json.load(response)[0]["name"], "新しい検証名")
                 task_id = project["first_task_id"]
                 request = Request(base + f"/api/tasks/{task_id}/children", data=json.dumps({"title": "子タスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:

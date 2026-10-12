@@ -5,7 +5,7 @@ const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を�
 const chatHeightStorageKey = 'develop-agent.chat-height';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
-const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
+const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 
 function isTaskBusy(task) {
@@ -223,13 +223,31 @@ function renderTree() {
     }
   };
   for (const project of state.projects) {
+    const item = document.createElement('div');
+    item.className = 'tree-item project-item';
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `tree-row project-row${state.project?.id === project.id ? ' selected' : ''}`;
     row.textContent = `▣ ${project.name} (${project.completed_count}/${project.task_count})`;
     row.title = project.branch;
     row.addEventListener('click', () => selectProject(project.id));
-    tree.append(row);
+    const rename = document.createElement('button');
+    rename.type = 'button';
+    rename.className = 'tree-action';
+    rename.textContent = '✎';
+    rename.title = `プロジェクト「${project.name}」の名前を変更`;
+    rename.setAttribute('aria-label', rename.title);
+    rename.addEventListener('click', () => openRename('project', project.id));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'tree-action delete';
+    remove.textContent = '×';
+    remove.title = `プロジェクト「${project.name}」を削除`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.disabled = state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task));
+    remove.addEventListener('click', () => deleteProject(project.id));
+    item.append(row, rename, remove);
+    tree.append(item);
     for (const task of children.get('root') || []) {
       if (task.project_id !== project.id) continue;
       const rootItem = document.createElement('div');
@@ -757,13 +775,35 @@ function openCreate(parentId = null) {
   $('#new-title').focus();
 }
 
-function openRename() {
-  /** Fill the rename dialog from the selected task and return nothing. */
-  if (!state.task || isTaskBusy(state.task)) return;
-  $('#rename-title').value = state.task.title;
+function openRename(kind, id) {
+  /** Fill the rename dialog for a project or task ID and return nothing. */
+  const item = kind === 'project' ? state.projects.find((project) => project.id === id) : state.tasks.find((task) => task.id === id);
+  if (!item || (kind === 'task' && isTaskBusy(item))) return;
+  state.renameTarget = { kind, id, name: kind === 'project' ? item.name : item.title };
+  $('#rename-dialog-title').textContent = kind === 'project' ? 'プロジェクト名を変更' : '開発項目の名前を変更';
+  $('#rename-title').value = state.renameTarget.name;
   $('#rename-dialog').showModal();
   $('#rename-title').focus();
   $('#rename-title').select();
+}
+
+async function deleteProject(projectId) {
+  /** Confirm and delete projectId, then refresh the visible workspace. */
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project || !window.confirm(`プロジェクト「${project.name}」と全タスクの記録・作業ブランチを削除しますか？`)) return;
+  try {
+    await api(`/api/projects/${projectId}`, { method: 'DELETE' });
+    if (state.project?.id === projectId) state.project = null;
+    if (state.task?.project_id === projectId) {
+      state.task = null;
+      state.messages = [];
+      state.evidence = [];
+      state.drafts = { plan: '', result: '' };
+    }
+    await refreshTasks();
+    render();
+    toast('プロジェクトを削除しました');
+  } catch (error) { toast(error.message); }
 }
 
 function openDelete(taskId = state.task?.id) {
@@ -794,19 +834,28 @@ function bindEvents() {
     form?.querySelector('input[type="radio"]')?.focus({ preventScroll: true });
   });
   $('#add-child').addEventListener('click', () => openCreate(state.task.id));
-  $('#rename-task').addEventListener('click', openRename);
-  $('#cancel-rename').addEventListener('click', () => $('#rename-dialog').close());
+  $('#rename-task').addEventListener('click', () => openRename('task', state.task?.id));
+  $('#cancel-rename').addEventListener('click', () => { state.renameTarget = null; $('#rename-dialog').close(); });
   $('#rename-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const title = $('#rename-title').value.trim();
+    const target = state.renameTarget;
+    if (!target) return;
     if (!title) { toast('名前を入力してください'); return; }
-    if (title === state.task.title) { $('#rename-dialog').close(); return; }
+    if (title === target.name) { state.renameTarget = null; $('#rename-dialog').close(); return; }
     try {
-      state.task = await api(`/api/tasks/${state.task.id}`, { method: 'PATCH', body: JSON.stringify({ title }) });
+      if (target.kind === 'project') {
+        const project = await api(`/api/projects/${target.id}`, { method: 'PATCH', body: JSON.stringify({ name: title }) });
+        if (state.project?.id === target.id) state.project = project;
+      } else {
+        const task = await api(`/api/tasks/${target.id}`, { method: 'PATCH', body: JSON.stringify({ title }) });
+        if (state.task?.id === target.id) state.task = task;
+      }
       $('#rename-dialog').close();
+      state.renameTarget = null;
       await refreshTasks();
       render();
-      toast('開発項目の名前を変更しました');
+      toast(target.kind === 'project' ? 'プロジェクト名を変更しました' : '開発項目の名前を変更しました');
     } catch (error) { toast(error.message); }
   });
   $('#delete-task').addEventListener('click', () => openDelete());
@@ -962,16 +1011,7 @@ function bindEvents() {
       toast('ブランチ名を更新しました');
     } catch (error) { toast(error.message); }
   });
-  $('#delete-project').addEventListener('click', async () => {
-    if (!window.confirm(`プロジェクト「${state.project.name}」とタスクの記録を削除しますか？`)) return;
-    try {
-      await api(`/api/projects/${state.project.id}`, { method: 'DELETE' });
-      state.project = null;
-      await refreshTasks();
-      render();
-      toast('プロジェクトを削除しました');
-    } catch (error) { toast(error.message); }
-  });
+  $('#delete-project').addEventListener('click', () => deleteProject(state.project.id));
   $('#details-toggle').addEventListener('click', () => {
     const content = $('#details-content');
     content.classList.toggle('hidden');

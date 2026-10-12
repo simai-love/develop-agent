@@ -401,6 +401,15 @@ class WorkflowService:
             project.update(slug=slug, branch=new_branch, updated_at=now())
             return save_project(self.projects_root, project)
 
+    def rename_project(self, project_id: str, name: str) -> dict:
+        """Update the display name of project_id and return its record."""
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+            raise ValueError("プロジェクト名は1〜120文字で入力してください")
+        with self.lock:
+            project = read_project(self.projects_root, project_id)
+            project.update(name=name.strip(), updated_at=now())
+            return save_project(self.projects_root, project)
+
     def migrate_legacy(self) -> None:
         """Wrap legacy root tasks in projects while preserving task IDs."""
         with self.lock:
