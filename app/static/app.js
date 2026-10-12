@@ -5,7 +5,7 @@ const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を�
 const chatHeightStorageKey = 'develop-agent.chat-height';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
-const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
+const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 
 function isTaskBusy(task) {
@@ -238,6 +238,14 @@ function renderTree() {
     }
     row.title = project.branch;
     row.addEventListener('click', () => selectProject(project.id));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'tree-action';
+    add.textContent = '＋';
+    add.title = `プロジェクト「${project.name}」にタスクを追加`;
+    add.setAttribute('aria-label', add.title);
+    add.disabled = project.status === 'completed' || project.needs_review || state.tasks.some(isTaskBusy);
+    add.addEventListener('click', () => openCreate(null, project.id));
     const rename = document.createElement('button');
     rename.type = 'button';
     rename.className = 'tree-action';
@@ -253,7 +261,7 @@ function renderTree() {
     remove.setAttribute('aria-label', remove.title);
     remove.disabled = state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task));
     remove.addEventListener('click', () => deleteProject(project.id));
-    item.append(row, rename, remove);
+    item.append(row, add, rename, remove);
     tree.append(item);
     for (const task of children.get('root') || []) {
       if (task.project_id !== project.id) continue;
@@ -288,6 +296,7 @@ function render() {
     $('#migration-action').classList.toggle('hidden', !project.needs_review);
     $('#legacy-branch-action').classList.toggle('hidden', !project.legacy || project.status === 'completed');
     if (document.activeElement !== $('#legacy-branch-slug')) $('#legacy-branch-slug').value = project.slug;
+    $('#add-project-task').disabled = project.needs_review || project.status === 'completed' || state.tasks.some(isTaskBusy);
     $('#complete-project').disabled = project.needs_review || project.status === 'completed' || project.completed_count !== project.task_count || !project.task_count;
     return;
   }
@@ -673,6 +682,9 @@ async function pollRun(runId, taskId) {
       await loadChat();
       await loadEvidence();
       render();
+    } else if (state.project) {
+      state.project = await api(`/api/projects/${state.project.id}`);
+      render();
     }
     toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : `Agentの実行に失敗しました: ${run.message}`);
     break;
@@ -754,16 +766,18 @@ async function savePendingDrafts() {
   render();
 }
 
-function openCreate(parentId = null) {
-  /** Open the task creation form for optional parentId; return nothing. */
+function openCreate(parentId = null, projectId = null) {
+  /** Open the creation form for a parent task or project ID; return nothing. */
   state.parentId = parentId;
-  $('#dialog-title').textContent = parentId ? '子タスクを作成' : 'プロジェクトを作成';
+  state.createProjectId = projectId;
+  $('#dialog-title').textContent = parentId ? '子タスクを作成' : projectId ? 'タスクを作成' : 'プロジェクトを作成';
   $('#dialog-description').textContent = parentId
     ? `「${state.tasks.find((task) => task.id === parentId)?.title || '親タスク'}」の子タスクを作成します。`
-    : 'プロジェクト名、ブランチ名、最初のタスクを指定してください。';
-  $('#new-title-label').textContent = parentId ? '子タスク名' : 'プロジェクト名';
-  $('#project-create-fields').classList.toggle('hidden', Boolean(parentId));
-  $('#new-slug').required = !parentId;
+    : projectId ? `「${state.projects.find((project) => project.id === projectId)?.name || 'プロジェクト'}」の直下にタスクを作成します。`
+      : 'プロジェクト名、ブランチ名、最初のタスクを指定してください。';
+  $('#new-title-label').textContent = parentId ? '子タスク名' : projectId ? 'タスク名' : 'プロジェクト名';
+  $('#project-create-fields').classList.toggle('hidden', Boolean(parentId || projectId));
+  $('#new-slug').required = !parentId && !projectId;
   $('#first-task-title').required = false;
   $('#new-title').value = '';
   $('#new-slug').value = '';
@@ -817,6 +831,7 @@ function bindEvents() {
   /** Attach actions to task, editor, and dialog controls; return nothing. */
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
+  $('#add-project-task').addEventListener('click', () => openCreate(null, state.project.id));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
     state.task = null;
@@ -885,6 +900,8 @@ function bindEvents() {
       let task;
       if (state.parentId) {
         task = await api(`/api/tasks/${state.parentId}/children`, { method: 'POST', body: JSON.stringify({ title: $('#new-title').value }) });
+      } else if (state.createProjectId) {
+        task = await api(`/api/projects/${state.createProjectId}/tasks`, { method: 'POST', body: JSON.stringify({ title: $('#new-title').value }) });
       } else {
         const project = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: $('#new-title').value, slug: $('#new-slug').value, first_task_title: $('#first-task-title').value || $('#new-title').value }) });
         task = await api(`/api/tasks/${project.first_task_id}`);
@@ -894,7 +911,7 @@ function bindEvents() {
       state.drafts = { plan: '', result: '' };
       await refreshTasks();
       await selectTask(task.id);
-      toast(state.parentId ? '子タスクを作成しました' : 'プロジェクトを作成しました');
+      toast(state.parentId ? '子タスクを作成しました' : state.createProjectId ? 'タスクを作成しました' : 'プロジェクトを作成しました');
     } catch (error) { toast(error.message); }
   });
   $('#tab-plan').addEventListener('click', () => { state.tab = 'plan'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });

@@ -141,6 +141,9 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json()
                 if path == "/api/projects":
                     self.send_json(201, self.present_project(WORKFLOW.create_project(body["name"], body["slug"], body.get("first_task_title") or body["name"])))
+                elif path.startswith("/api/projects/") and path.endswith("/tasks"):
+                    project_id = path.removeprefix("/api/projects/").removesuffix("/tasks")
+                    self.send_json(201, self.present_task(WORKFLOW.create_root_task(project_id, body["title"])))
                 elif path.startswith("/api/projects/") and path.endswith("/complete"):
                     self.send_json(200, self.present_project(WORKFLOW.complete_project(path.removeprefix("/api/projects/").removesuffix("/complete"), body)))
                 elif path.startswith("/api/projects/") and path.endswith("/acknowledge-migration"):
