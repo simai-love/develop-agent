@@ -250,7 +250,12 @@ function renderTree() {
     projectName.className = 'tree-text';
     projectName.textContent = `▣ ${project.name} (${project.completed_count}/${project.task_count})`;
     row.append(projectName);
-    if (state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task))) {
+    if (project.status === 'completed') {
+      const completed = document.createElement('span');
+      completed.className = 'tree-status completed';
+      completed.textContent = '完了済み';
+      row.append(completed);
+    } else if (state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task))) {
       const running = document.createElement('span');
       running.className = 'tree-status running';
       running.textContent = '実行中';
