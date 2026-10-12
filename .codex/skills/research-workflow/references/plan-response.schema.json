@@ -32,6 +32,6 @@
       }
     }
   },
-  "required": ["message", "implementation_ready", "reason", "questions"],
+  "required": ["message", "implementation_ready", "reason", "child_task_proposals", "questions"],
   "additionalProperties": false
 }

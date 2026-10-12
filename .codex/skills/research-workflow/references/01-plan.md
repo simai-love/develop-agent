@@ -16,4 +16,4 @@
 
 出力前に、案内文や HTML コメントが残っていないこと、質問欄と `questions` の質問・選択肢が一致すること、根拠のない数値や確定表現がないことを確認する。
 
-計画チャットの最終出力は `references/plan-response.schema.json` に従う。`message` はユーザー向けの短い説明、`reason` は判定理由。Markdown 本文を JSON に重複させない。`implementation_ready` が `true` の場合 `questions` は空配列にする。保存した `plan.md` が空なら準備完了としない。
+計画チャットの最終出力は `references/plan-response.schema.json` に従う。`message` はユーザー向けの短い説明、`reason` は判定理由。Markdown 本文を JSON に重複させない。`implementation_ready` が `true` の場合 `questions` は空配列にする。分割案がない場合も `child_task_proposals` は必ず空配列で返す。保存した `plan.md` が空なら準備完了としない。

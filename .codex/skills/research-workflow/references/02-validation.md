@@ -24,4 +24,4 @@
 
 最終出力は `references/validation-response.schema.json` に従う。`outcome` は仮説を支持した場合 `supported`、支持しなかった場合 `not_supported`、判断できない場合 `inconclusive`。`evidence_files` には実在する `evidence/` 内の相対パスだけを入れる。結果本文は JSON に重複させず、レポート原稿に残す。結果がなく原稿を書かない場合は `outcome: inconclusive`、`needs_followup: true` とする。
 
-コードを変更した場合は `commit_message` に、その変更を表す簡潔な日本語の文を入れる。総括やコード変更のない検証では空文字列でよい。コミット操作そのものは GUI がユーザーの完了操作後に行う。
+コードを変更した場合は `commit_message` に、その変更を表す簡潔な日本語の文を入れる。総括やコード変更のない検証では空文字列を返す。分割案がない場合も `child_task_proposals` は空配列を返す。コミット操作そのものは GUI がユーザーの完了操作後に行う。

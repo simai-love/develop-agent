@@ -22,6 +22,6 @@
       }
     }
   },
-  "required": ["message", "outcome", "evidence_files", "needs_followup"],
+  "required": ["message", "outcome", "evidence_files", "needs_followup", "commit_message", "child_task_proposals"],
   "additionalProperties": false
 }
