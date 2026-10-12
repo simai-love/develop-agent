@@ -381,7 +381,7 @@ function render() {
 function renderProposals() {
   /** Render pending child proposals for the selected task and return nothing. */
   const items = state.task.child_proposals?.filter((item) => item.status === 'pending') || [];
-  $('#proposal-section').classList.toggle('hidden', !items.length);
+  $('#proposal-section').classList.toggle('hidden', state.tab !== 'plan' || !items.length);
   const list = $('#proposal-list');
   list.replaceChildren();
   for (const item of items) {
