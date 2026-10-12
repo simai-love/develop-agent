@@ -4,4 +4,6 @@
 
 `test_agent_stream.py` はCLIイベントの変換と実行中の進捗取得を確認します。
 
+`test_response_schemas.py` はCodexの厳格なJSON応答形式で必要な必須項目を確認します。
+
 Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs` で確認します。
