@@ -818,6 +818,7 @@ function openDelete(taskId = state.task?.id) {
 
 function bindEvents() {
   /** Attach actions to task, editor, and dialog controls; return nothing. */
+  let pendingCommit = null;
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
   $('#home-button').addEventListener('click', () => {
@@ -968,7 +969,20 @@ function bindEvents() {
   $('#complete-button').addEventListener('click', async () => {
     try {
       const preview = await api(`/api/tasks/${state.task.id}/completion-preview`);
-      const details = preview.kind === 'legacy' ? '移行前の検証記録として完了します。新しいコミットは作りません。' : preview.kind === 'commit' ? `コミット先: ${preview.branch}\nメッセージ: ${preview.message}\n対象: ${preview.paths.join(', ')}` : `マージ: ${preview.branch} → ${preview.target}\n対象: ${preview.paths.join(', ')}`;
+      if (preview.kind === 'commit') {
+        pendingCommit = { taskId: state.task.id, preview };
+        $('#commit-branch').textContent = preview.branch;
+        $('#commit-paths').replaceChildren(...preview.paths.map((path) => {
+          const item = document.createElement('li');
+          item.textContent = path;
+          return item;
+        }));
+        $('#commit-message').value = preview.message;
+        $('#commit-dialog').showModal();
+        $('#commit-message').focus();
+        return;
+      }
+      const details = preview.kind === 'legacy' ? '移行前の検証記録として完了します。新しいコミットは作りません。' : `マージ: ${preview.branch} → ${preview.target}\n対象: ${preview.paths.join(', ')}`;
       if (!window.confirm(`検証結果を確認し、タスクを完了しますか？\n${details}`)) return;
       state.task = await api(`/api/tasks/${state.task.id}/complete`, {
         method: 'POST', body: JSON.stringify(preview),
@@ -977,6 +991,26 @@ function bindEvents() {
       render();
       toast('タスクを完了しました');
     } catch (error) { toast(error.message); }
+  });
+  $('#cancel-commit').addEventListener('click', () => $('#commit-dialog').close());
+  $('#commit-dialog').addEventListener('close', () => { pendingCommit = null; });
+  $('#commit-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!pendingCommit || $('#confirm-commit').disabled) return;
+    const message = $('#commit-message').value.trim();
+    if (!message) { toast('コミットメッセージを入力してください'); $('#commit-message').focus(); return; }
+    const { taskId, preview } = pendingCommit;
+    $('#confirm-commit').disabled = true;
+    try {
+      state.task = await api(`/api/tasks/${taskId}/complete`, {
+        method: 'POST', body: JSON.stringify({ ...preview, message }),
+      });
+      $('#commit-dialog').close();
+      await refreshTasks();
+      render();
+      toast('タスクを完了しました');
+    } catch (error) { toast(error.message); }
+    finally { $('#confirm-commit').disabled = false; }
   });
   $('#summary-button').addEventListener('click', async () => {
     try {

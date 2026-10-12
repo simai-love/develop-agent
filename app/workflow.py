@@ -251,6 +251,9 @@ class WorkflowService:
             if preview["kind"] == "legacy":
                 return mark_task_completed(self.tasks_root, task_id, None, "legacy")
             if preview["kind"] == "commit":
+                commit_message = expected.get("message")
+                if not isinstance(commit_message, str) or not commit_message.strip():
+                    raise ValueError("コミットメッセージを入力してください")
                 project_id = read_task(self.tasks_root, task_id)["project_id"]
                 project = read_project(self.projects_root, project_id)
                 if project.get("branch_owners", {}).get(preview["branch"]) != task_id:
@@ -258,7 +261,7 @@ class WorkflowService:
                 if expected.get("paths") != preview["paths"]:
                     raise ValueError("確認後に変更ファイルが変わりました")
                 operation = self.begin_operation(project_id, "commit", task_id, preview["branch"])
-                message = f"{expected.get('message') or preview['message']}\n\nTask-Operation: {operation['id']}"
+                message = f"{commit_message.strip()}\n\nTask-Operation: {operation['id']}"
                 commit = self.git.commit(preview["branch"], preview["paths"], message)
                 operation.update(state="git_done", git_hash=commit)
                 self.record_operation(project_id, operation)

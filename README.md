@@ -1,50 +1,50 @@
 # Develop Agent
 
-研究開発の目的、仮説、実装方針、検証結果をプロジェクトと階層化したタスクで整理するローカルGUIです。
+研究開発の目的、仮説、実装方針、検証結果を、プロジェクトと階層化したタスクに残すローカル GUI です。計画の相談から実装・検証結果の確認、完了判断までを画面で進めます。
 
-GUIの実装は `app/`、Agent向けの指示は `AGENTS.md` と `.codex/`、設計資料は `docs/` に置きます。実行時に作成する `tasks/` は個人の作業データであり、Git管理から除外します。
+## 環境構築と起動
 
-## 起動
+Python 3.12 以降、[uv](https://docs.astral.sh/uv/)、Node.js と npm、Git を用意してください。新しいプロジェクトを作るには、このリポジトリに `dev` ブランチが必要です。初回の Codex CLI 取得にはネットワーク接続が必要です。
 
-Python 3.12以降、`uv`、Node.js、npm、Gitを想定しています。Python環境は `pyproject.toml` と `uv.lock` を用いて `uv` で管理します。初回起動時にアプリ専用のCodex CLIをインストールするため、ネットワーク接続が必要です。Codex CLIへのログインも必要です。Claude Code CLIは別途インストール済みの場合に選択できます。
+リポジトリのルートで次を実行します。Python の依存関係は `pyproject.toml` と `uv.lock` に基づき `uv` で同期し、アプリ専用の Codex CLI は `app/cli/package-lock.json` に基づき npm で導入します。
 
 ```bash
+uv sync --frozen
+npm ci --prefix app/cli
 bash scripts/run.sh
 ```
 
-ブラウザで `http://127.0.0.1:8765` を開きます。起動スクリプトが `uv` で `.venv` を同期・有効化します。
+`scripts/run.sh` は `.venv` を有効化して Python 環境を再同期し、Codex CLI が未導入なら npm で導入してサーバーを起動します。ブラウザで `http://127.0.0.1:8765` を開いてください。Agent のチャットと実装には、選んだ CLI の認証とモデルの利用権限が必要です。Claude Code CLI を選ぶ場合は別途導入・認証してください。
 
-GUIでは、開発項目の作成、親子関係の表示、計画と検証レポートのMarkdown保存、状態管理、ユーザーによる完了操作ができます。計画・検証のチャットと実装ボタンは、選択したローカルCLIに接続します。計画チャットでは、Agentが選択式の質問を出し、`tasks/<id>/plan.md` を直接更新します。保存した計画をAgentが実装可能と判定した場合に実装ボタンが有効になります。実装開始時は確認ダイアログを表示し、コード変更に続けて検証します。結果が得られるたびに `tasks/<id>/reports/` に新しいレポートを保存し、02画面のトグルから閲覧できます。02のチャットから追加検証やコード修正・再検証を依頼できます。検証資料の画像・動画・データは画面で閲覧できます。実装と検証記録を確認した後、タスクの完了はユーザーが決めます。
+## 文書案内
 
-計画・検証レポート・チャットは見出し、太字、箇条書きなどを整えて表示します。計画のMarkdown本文は「Markdownを編集」から変更できます。01の選択式質問には質問ごとに自由記述欄があり、選択肢または文章で回答できます。
+このリポジトリの文書は次のとおりです。用途に合わせて本文へ直接進めます。
 
-Agentチャット欄の下端を上下にドラッグすると高さを調整できます。選択した高さはブラウザに保存され、次回も使われます。下端にキーボードでフォーカスした場合は上下矢印キーでも調整できます。
+| 読む人・目的 | 文書 | 分かること |
+| --- | --- | --- |
+| 初めて画面を使う人 | [利用ガイド](docs/user-guide.md) | 作成、01 計画、実装、02 検証、完了、記録確認の操作順 |
+| 実装経路と更新先を調べる開発者 | [開発・システム設計ガイド](docs/development-guide.md) | 画面、API、保存、Git、変更先と検証方法 |
+| Agent の作業規則を調べる人 | [研究開発スキルの説明](.codex/skills/research-workflow/README.md)・[手順本文](.codex/skills/research-workflow/SKILL.md) | 01・実装・02 と GUI の担当 |
 
-Agentの実行中はチャット欄の直上に、計画作成中・実装中・追加検証中の案内を表示します。実装中に画面を更新した場合も、保存された状態を確認して表示を更新します。左の一覧と詳細画面には「ユーザー待ち」「実行中」「完了済み」などと次の操作を表示します。
-
-Codex CLIが見つからない場合は、チャットと実装ボタンは利用できません。プロジェクト作成時に `dev` からブランチを作り、子タスクの検証後に完了ボタンでコミットします。子を持つタスクは総括後に親ブランチへマージし、全タスクが終わればプロジェクトを `dev` にマージできます。Agentが分割を提案した場合、承認後に子タスクを作成します。グラフ表示は後続の実装対象です。
-
-既存の最上位開発項目は起動時にプロジェクトへ移行します。元の作業ツリーに未コミット変更がある場合は、プロジェクト画面に確認案内を表示します。変更をGitで整理した後、「整理を確認」を押すと移行先ブランチを更新できます。
-移行前に検証済みで新しい差分がないタスクは、確認後に過去の完了記録として扱い、新しいコミットを作りません。
-
-開発項目は詳細画面と左の一覧から子タスクを追加・削除できます。左のプロジェクト一覧からはプロジェクト名の変更と削除もできます。名前を変更してもブランチ名は変わりません。削除は確認を経て行い、子タスクも一緒に消えます。計画・チャット・レポート・資料は復元できません。Git履歴や未コミット変更があるプロジェクトは削除できません。Agent実行中のタスクを含む場合も削除できません。Codexの初期モデルは `gpt-6-sol` です。モデル欄にはローカルCLIの `model/list` が提示する候補を表示し、変更できます。候補の利用可否は契約・ワークスペース設定によります。Claude Codeはモデル欄を表示せず、CLI側の設定を使用します。
-
-開発項目の名前は詳細画面の「名前を変更」から編集できます。変更すると左の一覧にも反映されます。
+利用ガイドには操作に対応する画面例を掲載しています。画像の再現条件は[画面例の説明](docs/screenshots/README.md)で確認できます。
 
 ## フォルダ案内
 
-- [`.codex/`](.codex/README.md): Web UI の Agent スキルと接続方針
-- [`app/`](app/README.md): GUI とローカル API
-- [`app/git/`](app/git/README.md): Git ブランチと worktree の操作
-- [`app/cli/`](app/cli/README.md): Codex CLI の実行環境
-- [`app/static/`](app/static/README.md): ブラウザ画面
-- [`docs/`](docs/README.md): 詳細設計
-- [`scripts/`](scripts/README.md): 起動手順
-- [`tests/`](tests/README.md): 動作確認
-- [`.codex/skills/`](.codex/skills/README.md): スキル一覧
-- [`.codex/skills/research-workflow/`](.codex/skills/research-workflow/README.md): 計画・検証スキル
-- [`.codex/skills/research-workflow/agents/`](.codex/skills/research-workflow/agents/README.md): Codex 表示設定
-- [`.codex/skills/research-workflow/references/`](.codex/skills/research-workflow/references/README.md): 画面別の Agent 指示
-- [`.codex/skills/research-workflow/assets/`](.codex/skills/research-workflow/assets/README.md): Markdown テンプレート
+| 読む人・目的 | フォルダ | 中身 |
+| --- | --- | --- |
+| 画面や API を直す開発者 | [app/](app/README.md) | GUI、保存処理、Agent との接続 |
+| ブラウザ画面を直す開発者 | [app/static/](app/static/README.md) | HTML、CSS、JavaScript |
+| ブランチ操作を調べる開発者 | [app/git/](app/git/README.md) | ブランチ、worktree、コミット、マージ |
+| CLI の実行環境を調べる開発者 | [app/cli/](app/cli/README.md) | アプリ専用 Codex CLI の npm 管理 |
+| 起動処理を調べる人 | [scripts/](scripts/README.md) | 環境同期とサーバー起動のスクリプト |
+| 動作確認をする開発者 | [tests/](tests/README.md) | Python と JavaScript のテスト |
+| Agent の動作を調べる人 | [.codex/](.codex/README.md) | GUI と Agent の連携方針 |
+| Agent の作業手順を調べる人 | [.codex/skills/](.codex/skills/README.md) | 利用可能なスキル |
+| 研究開発タスクの指示を調べる人 | [.codex/skills/research-workflow/](.codex/skills/research-workflow/README.md) | 計画・検証の共通手順 |
+| Agent の表示設定を調べる人 | [.codex/skills/research-workflow/agents/](.codex/skills/research-workflow/agents/README.md) | Agent の表示設定 |
+| 画面別の指示を調べる人 | [.codex/skills/research-workflow/references/](.codex/skills/research-workflow/references/README.md) | 01・02 の指示と応答形式 |
+| 計画・結果の書式を調べる人 | [.codex/skills/research-workflow/assets/](.codex/skills/research-workflow/assets/README.md) | Markdown テンプレート |
+| 文書を直す人 | [docs/](docs/README.md) | 利用ガイドと設計資料の原稿 |
+| 画面例を更新する人 | [docs/screenshots/](docs/screenshots/README.md) | サンプル画面と再現条件 |
 
-保存形式と機能の境界は [docs/architecture.md](docs/architecture.md) を参照してください。
+実行中のプロジェクトとタスクの記録は、リポジトリ直下の `projects/` と `tasks/` に保存され、Git 管理から除外されます。各ファイルの用途は[利用ガイドの「保存された記録を確認する」](docs/user-guide.md#保存された記録を確認する)を参照してください。
