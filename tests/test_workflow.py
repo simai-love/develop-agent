@@ -196,7 +196,9 @@ class WorkflowTest(unittest.TestCase):
                 "Path('plan.md').write_text('# 計画\\n対象A', encoding='utf-8')\n"
                 "data = {'message': '計画案です', "
                 "'implementation_ready': True, 'reason': '明確です', 'questions': []}\n"
-                "print(json.dumps({'structured_output': data, 'result': ''}, ensure_ascii=False))\n",
+                "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'tool-1', 'name': 'Bash', 'input': {'command': 'git status --short'}}]}}), flush=True)\n"
+                "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'tool-1', 'content': ''}]}}), flush=True)\n"
+                "print(json.dumps({'type': 'result', 'structured_output': data, 'result': ''}, ensure_ascii=False), flush=True)\n",
                 encoding="utf-8",
             )
             cli.chmod(0o755)
@@ -209,6 +211,7 @@ class WorkflowTest(unittest.TestCase):
             task = read_task(tasks, task["id"])
             self.assertTrue(task["can_implement"])
             self.assertEqual(task["provider"], "claude")
+            self.assertEqual(manager.get_run(run["id"])["activity"], [{"id": "tool-1", "label": "git status --short", "state": "done"}])
 
     def test_result_chat_can_validate_and_revise_code(self):
         """Return after checking validation, code revision, and recorded files."""

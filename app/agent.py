@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
+from app.agent_stream import run_streamed
 from app.evidence import list_evidence
 from app.model_catalog import codex_models
 from app.projects import read_project
@@ -112,7 +113,24 @@ class AgentManager:
     def get_run(self, run_id: str) -> dict | None:
         """Return a copy of run ID or None when it does not exist."""
         with self.lock:
-            return dict(self.runs[run_id]) if run_id in self.runs else None
+            if run_id not in self.runs:
+                return None
+            run = self.runs[run_id]
+            return {**run, "activity": [dict(item) for item in run["activity"]]}
+
+    def _record_activity(self, run_id: str, activity: dict) -> None:
+        """Apply one tool activity update to run ID and return nothing."""
+        with self.lock:
+            entries = self.runs[run_id]["activity"]
+            activity_id = activity.get("id")
+            match = next((item for item in entries if activity_id and item["id"] == activity_id), None)
+            if match:
+                match["state"] = activity["state"]
+                if activity.get("label"):
+                    match["label"] = str(activity["label"])[:800]
+            elif activity.get("label"):
+                entries.append({"id": activity_id, "label": str(activity["label"])[:800], "state": activity["state"]})
+                del entries[:-12]
 
     def _start(self, task_id: str, kind: str, phase: str, message: str) -> dict:
         """Register one task run and start its worker; return the run record."""
@@ -136,7 +154,7 @@ class AgentManager:
             if writes_code and self.workflow and task["project_id"]:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"])}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "activity": []}
             self.runs[run_id] = run
             self.active_tasks.add(task_id)
             if writes_code:
@@ -189,18 +207,16 @@ class AgentManager:
                         command += ["--image", *(str(task_path / "evidence" / entry["name"]) for entry in images)]
                 command += ["--sandbox", "workspace-write", "--config", "sandbox_workspace_write.network_access=true", "-"]
             else:
-                command = [self.cli_paths["claude"], "--print", "--output-format", "json", "--permission-mode", "acceptEdits"]
+                command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
-            result = subprocess.run(
-                command, input=prompt, text=True, capture_output=True,
-                cwd=code_root if writes_code else task_path, timeout=1800,
-            )
+            result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity))
             if run["provider"] == "codex":
                 answer = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
             else:
-                payload = json.loads(result.stdout) if result.returncode == 0 else {}
+                events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+                payload = next((event for event in reversed(events) if event.get("type") == "result" or "structured_output" in event), {}) if result.returncode == 0 else {}
                 value = payload.get("structured_output", payload.get("result"))
                 answer = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value or ""
             if result.returncode != 0:
