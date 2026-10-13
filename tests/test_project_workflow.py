@@ -10,7 +10,7 @@ from pathlib import Path
 from app.agent import AgentManager
 from app.git.workspace import task_branch_name
 from app.projects import list_projects
-from app.storage import append_report, create_task, plan_hash, read_task, report_draft_path, save_child_proposals, save_metadata, write_text
+from app.storage import append_report, create_task, plan_hash, read_task, report_draft_path, save_child_proposals, save_metadata, set_readiness, write_text
 from app.workflow import WorkflowService
 
 
@@ -21,6 +21,65 @@ class ProjectWorkflowTest(unittest.TestCase):
         """Keep a Japanese title readable while removing Git ref separators."""
         self.assertEqual(task_branch_name(" 画面/表示の改善！ ", "abc123"), "task/画面-表示の改善-abc123")
         self.assertEqual(task_branch_name("...", "abc123"), "task/untitled-abc123")
+
+    def test_parallel_children_commit_separately_and_merge_after_review(self):
+        """Keep unapproved sibling edits isolated and merge each reviewed commit."""
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            (repo / "README.md").write_text("# Test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=repo, check=True)
+            service = WorkflowService(repo, repo / "tasks", repo / "projects")
+            project = service.create_project("検証", "validation", "親")
+            parent_id = project["first_task_id"]
+            children = [service.create_child(parent_id, title) for title in ("子A", "子B")]
+            for child in children:
+                write_text(service.tasks_root / child["id"] / "plan.md", "# 計画\n")
+                set_readiness(service.tasks_root, child["id"], True, "# 計画\n", "実装可能")
+            service.prepare_parallel_children(parent_id, [child["id"] for child in children])
+            self.assertNotEqual(service.code_path(children[0]["id"]), service.code_path(children[1]["id"]))
+            parent_path = service.code_path(parent_id)
+            for index, child in enumerate(children):
+                task_id = child["id"]
+                service.claim_code(task_id)
+                (service.code_path(task_id) / f"feature{index}.txt").write_text("done\n", encoding="utf-8")
+                write_text(report_draft_path(service.tasks_root, task_id), "# 検証\n")
+                append_report(service.tasks_root, task_id, "supported", [f"feature{index}.txt"], [], "codex", "test", False)
+            self.assertFalse((parent_path / "feature0.txt").exists())
+            first_id = children[0]["id"]
+            service.complete_task(first_id, service.completion_preview(first_id))
+            self.assertEqual(read_task(service.tasks_root, first_id)["status"], "completed")
+            self.assertTrue((parent_path / "feature0.txt").exists())
+            self.assertFalse((parent_path / "feature1.txt").exists())
+            second_id = children[1]["id"]
+            service.complete_task(second_id, service.completion_preview(second_id))
+            self.assertTrue((parent_path / "feature1.txt").exists())
+            self.assertEqual(set(service.summary_basis(parent_id)["children"]), {first_id, second_id})
+            conflicting = [service.create_child(parent_id, title) for title in ("子C", "子D")]
+            for index, child in enumerate(conflicting):
+                task_id = child["id"]
+                write_text(service.tasks_root / task_id / "plan.md", "# 計画\n")
+                set_readiness(service.tasks_root, task_id, True, "# 計画\n", "実装可能")
+            service.prepare_parallel_children(parent_id, [child["id"] for child in conflicting])
+            for index, child in enumerate(conflicting):
+                task_id = child["id"]
+                service.claim_code(task_id)
+                (service.code_path(task_id) / "feature0.txt").write_text(f"conflict {index}\n", encoding="utf-8")
+                write_text(report_draft_path(service.tasks_root, task_id), "# 検証\n")
+                append_report(service.tasks_root, task_id, "supported", ["feature0.txt"], [], "codex", "test", False)
+                if index == 0:
+                    service.complete_task(task_id, service.completion_preview(task_id))
+            blocked_id = conflicting[1]["id"]
+            with self.assertRaisesRegex(ValueError, "コミットは保存"):
+                service.complete_task(blocked_id, service.completion_preview(blocked_id))
+            self.assertEqual((parent_path / "feature0.txt").read_text(), "conflict 0\n")
+            self.assertTrue(read_task(service.tasks_root, blocked_id)["commit_hash"])
+            self.assertNotEqual(read_task(service.tasks_root, blocked_id)["status"], "completed")
+            self.assertTrue(service.git.clean(parent_path))
 
     def test_child_commits_merge_into_parent_then_dev(self):
         """Build a nested project and check commit and merge outputs."""

@@ -55,7 +55,7 @@ class AgentManager:
         self.runs: dict[str, dict] = {}
         self.active_tasks: set[str] = set()
         self.implementation_running = False
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
     def availability(self) -> dict:
         """Return CLI availability and Codex's picker-visible model catalog."""
@@ -100,6 +100,20 @@ class AgentManager:
         if self.workflow and self.workflow.children(task_id):
             raise ValueError("子タスクがある場合は親の総括を作成してください")
         return self._start(task_id, "implement", "plan", "")
+
+    def start_parallel_children(self, parent_id: str, task_ids: list[str]) -> list[dict]:
+        """Start selected sibling IDs in separate worktrees; return their runs."""
+        if not self.workflow:
+            raise ValueError("並列実行にはGit作業領域が必要です")
+        with self.lock:
+            if self.active_tasks:
+                raise ValueError("Agentの実行が終わってから並列実行してください")
+            for task_id in task_ids:
+                task = read_task(self.tasks_root, task_id)
+                if not self.cli_paths[task["provider"]]:
+                    raise ValueError(f"{task['provider']} CLI is not installed")
+            self.workflow.prepare_parallel_children(parent_id, task_ids)
+            return [self.start_implementation(task_id) for task_id in task_ids]
 
     def start_summary(self, task_id: str) -> dict:
         """Start a parent summary and return its run record."""
@@ -148,7 +162,10 @@ class AgentManager:
             if task_id in self.active_tasks:
                 raise ValueError("This task already has an active Agent run")
             if writes_code and self.implementation_running:
-                raise ValueError("Another implementation is running")
+                current_branch = self.workflow.branch_for(task_id) if self.workflow else None
+                active_code = [item for item in self.runs.values() if item["state"] == "running" and (item["kind"] == "implement" or item["kind"] == "chat" and item["phase"] == "result")]
+                if not current_branch or not task["branch"] or any(self.workflow.branch_for(item["task_id"]) == current_branch for item in active_code):
+                    raise ValueError("Another implementation is running on this branch")
             if not writes_code and self.implementation_running:
                 raise ValueError("Wait for the implementation to finish")
             if writes_code and any(item["kind"] == "chat" and item["state"] == "running" for item in self.runs.values()):
@@ -319,7 +336,7 @@ class AgentManager:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
             if writes_code:
-                self.implementation_running = False
+                self.implementation_running = any(item["state"] == "running" and (item["kind"] == "implement" or item["kind"] == "chat" and item["phase"] == "result") for item in self.runs.values())
 
     def _chat_prompt(self, task_id: str, phase: str) -> str:
         """Build a task-local prompt from a task ID and phase; return text."""
