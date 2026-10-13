@@ -9,6 +9,37 @@ const chatHeightMax = 1000;
 const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
+let parallelSelection = { parentId: null, ids: new Set() };
+
+function renderParallelChildren() {
+  /** Render selectable ready children of the current parent; return nothing. */
+  const parent = state.task;
+  const panel = $('#parallel-actions');
+  panel.classList.toggle('hidden', state.tab !== 'plan' || !parent.child_count || parent.status === 'completed');
+  if (panel.classList.contains('hidden')) return;
+  if (parallelSelection.parentId !== parent.id) parallelSelection = { parentId: parent.id, ids: new Set() };
+  const children = state.tasks.filter((item) => item.parent_id === parent.id);
+  const available = children.filter((item) => item.can_implement && !item.branch && item.implementation?.state === 'not_started' && item.status !== 'completed' && !isTaskBusy(item));
+  const list = $('#parallel-children');
+  list.replaceChildren(...children.map((item) => {
+    const label = document.createElement('label');
+    label.className = 'parallel-child';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = item.id;
+    input.checked = parallelSelection.ids.has(item.id);
+    input.disabled = !available.includes(item);
+    input.addEventListener('change', () => {
+      if (input.checked) parallelSelection.ids.add(item.id);
+      else parallelSelection.ids.delete(item.id);
+      $('#parallel-button').disabled = parallelSelection.ids.size < 2 || state.tasks.some(isTaskBusy);
+    });
+    label.append(input, document.createTextNode(` ${item.title}${input.disabled ? '（計画確認または未着手が必要）' : ''}`));
+    return label;
+  }));
+  for (const id of parallelSelection.ids) if (!available.some((item) => item.id === id)) parallelSelection.ids.delete(id);
+  $('#parallel-button').disabled = parallelSelection.ids.size < 2 || state.tasks.some(isTaskBusy);
+}
 
 function isTaskBusy(task) {
   /** Return whether the selected task has a running Agent request. */
@@ -424,6 +455,7 @@ function render() {
   $('#plan-actions').classList.toggle('hidden', !isPlan);
   $('#result-actions').classList.toggle('hidden', isPlan);
   $('#summary-actions').classList.toggle('hidden', isPlan || !task.child_count || task.status === 'completed');
+  renderParallelChildren();
   $('#evidence-section').classList.toggle('hidden', isPlan);
   $('#chat-context').textContent = isPlan ? '計画について議論' : '検証・修正について議論';
   $('#chat-input').placeholder = isPlan ? 'Agentに相談する内容を入力' : task.child_count ? '子タスクの総括ボタンを使用してください' : task.implementation?.changed_files?.length ? '追加検証や修正したいことを入力' : '実装後に追加検証や修正を依頼できます';
@@ -440,7 +472,7 @@ function render() {
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
   $('#complete-button').disabled = migrationPending || task.status === 'completed' || busy || (task.child_count ? !childrenDone || !summaryReady : task.implementation?.state !== 'succeeded' || !task.result.trim());
-  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : 'タスクを完了 →';
+  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.child_count ? '親ブランチへ統合 →' : 'タスクを完了 →';
   $('#complete-button').title = task.implementation?.state !== 'succeeded' ? 'CLIによる実装が確認されてから完了できます' : '';
   $('#result-actions p').textContent = task.implementation?.validation_outcome
     ? `Agentの検証結果：${outcomeLabels[task.implementation.validation_outcome]}。結果を確認し、目的を達成したと判断したら完了にしてください。`
@@ -1063,6 +1095,20 @@ function bindEvents() {
     event.target.value = '';
     await loadEvidence();
   });
+  $('#parallel-button').addEventListener('click', async () => {
+    try {
+      const taskIds = [...parallelSelection.ids];
+      if (taskIds.length < 2) return;
+      await savePendingDrafts();
+      const runs = await api(`/api/tasks/${state.task.id}/parallel-execute`, {
+        method: 'POST', body: JSON.stringify({ task_ids: taskIds }),
+      });
+      parallelSelection.ids.clear();
+      await refreshTasks();
+      for (const run of runs) watchRun(run);
+      toast(`${runs.length} 件の子タスクを並列実行しています`);
+    } catch (error) { toast(error.message); }
+  });
   $('#complete-button').addEventListener('click', async () => {
     try {
       const preview = await api(`/api/tasks/${state.task.id}/completion-preview`);
@@ -1087,7 +1133,12 @@ function bindEvents() {
       await refreshTasks();
       render();
       toast('タスクを完了しました');
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      state.task = await api(`/api/tasks/${state.task.id}`);
+      await refreshTasks();
+      render();
+      toast(error.message);
+    }
   });
   $('#cancel-commit').addEventListener('click', () => $('#commit-dialog').close());
   $('#commit-dialog').addEventListener('close', () => { pendingCommit = null; });
@@ -1106,7 +1157,13 @@ function bindEvents() {
       await refreshTasks();
       render();
       toast('タスクを完了しました');
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      state.task = await api(`/api/tasks/${taskId}`);
+      if (state.task.commit_hash) $('#commit-dialog').close();
+      await refreshTasks();
+      render();
+      toast(error.message);
+    }
     finally { $('#confirm-commit').disabled = false; }
   });
   $('#summary-button').addEventListener('click', () => {

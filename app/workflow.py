@@ -43,6 +43,48 @@ class WorkflowService:
         """Return the code worktree for task_id."""
         return self.git.ensure(self.branch_for(task_id))
 
+    def prepare_parallel_children(self, parent_id: str, task_ids: list[str]) -> None:
+        """Give selected ready sibling IDs isolated branches; return nothing."""
+        with self.lock:
+            if not isinstance(task_ids, list) or len(task_ids) < 2 or len(set(task_ids)) != len(task_ids):
+                raise ValueError("並列実行する子タスクを二つ以上選択してください")
+            parent = read_task(self.tasks_root, parent_id)
+            children = {child["id"]: child for child in self.children(parent_id)}
+            if any(task_id not in children for task_id in task_ids):
+                raise ValueError("同じ親の子タスクだけ選択してください")
+            if read_project(self.projects_root, parent["project_id"]).get("needs_review"):
+                raise ValueError("移行前のGit変更を確認してください")
+            parent_branch = self.branch_for(parent_id)
+            if read_project(self.projects_root, parent["project_id"]).get("branch_owners", {}).get(parent_branch):
+                raise ValueError("親ブランチには未完了の作業予約があります")
+            if not self.git.clean(self.git.ensure(parent_branch)):
+                raise ValueError("親ブランチの未コミット変更を整理してください")
+            for task_id in task_ids:
+                child = read_task(self.tasks_root, task_id)
+                if child["status"] == "completed" or not child["can_implement"] or self.children(task_id):
+                    raise ValueError("計画済みの未完了の葉タスクだけ選択してください")
+                if child["branch"] or child["implementation"]["state"] != "not_started":
+                    raise ValueError("未着手の子タスクだけ並列実行できます")
+            created = []
+            try:
+                for task_id in task_ids:
+                    child = read_task(self.tasks_root, task_id)
+                    branch = task_branch_name(child["title"], task_id)
+                    self.git.ensure(branch, parent_branch)
+                    created.append((task_id, branch))
+                for task_id, branch in created:
+                    child = read_task(self.tasks_root, task_id)
+                    child["branch"] = branch
+                    child["updated_at"] = now()
+                    save_metadata(self.tasks_root, child)
+            except Exception:
+                for task_id, branch in created:
+                    child = read_task(self.tasks_root, task_id)
+                    child["branch"] = None
+                    save_metadata(self.tasks_root, child)
+                    self.git.remove(branch)
+                raise
+
     def task_diff(self, task_id: str, path: str | None = None) -> dict:
         """Return task changed paths and an optional per-file patch for task_id."""
         task = read_task(self.tasks_root, task_id)
@@ -55,6 +97,8 @@ class WorkflowService:
             target = self.branch_for(parent) if parent else read_project(self.projects_root, task["project_id"])["branch"]
             revisions = (f"{target}...{branch}",)
         elif task["commit_hash"] and task["status"] == "completed":
+            revisions = (f"{task['commit_hash']}^", task["commit_hash"])
+        elif task["commit_hash"] and task["branch"]:
             revisions = (f"{task['commit_hash']}^", task["commit_hash"])
         elif task["status"] == "completed":
             revisions = ()
@@ -86,6 +130,8 @@ class WorkflowService:
             task = read_task(self.tasks_root, task_id)
             if task["status"] == "completed":
                 raise ValueError("完了済みタスクではコードを変更できません")
+            if task["branch"] and task["commit_hash"]:
+                raise ValueError("コミット済みの子タスクを親ブランチへ統合してください")
             project = read_project(self.projects_root, task["project_id"])
             if project.get("needs_review"):
                 raise ValueError("移行前のGit変更を確認してください")
@@ -142,7 +188,12 @@ class WorkflowService:
                     else:
                         task = read_task(self.tasks_root, operation["target_id"])
                         if task["status"] != "completed":
-                            mark_task_completed(self.tasks_root, task["id"], head, "commit" if operation["kind"] == "commit" else "merge")
+                            if operation["kind"] == "commit" and task["branch"]:
+                                task["commit_hash"] = head
+                                task["updated_at"] = now()
+                                save_metadata(self.tasks_root, task)
+                            else:
+                                mark_task_completed(self.tasks_root, task["id"], head, "commit" if operation["kind"] == "commit" else "merge")
                         if operation["kind"] == "commit":
                             self.release_code(task["id"])
                     if operation["kind"] in {"merge", "project"} and self.git.git("show-ref", "--verify", f"refs/heads/{operation['branch']}", check=False).returncode == 0:
@@ -277,6 +328,9 @@ class WorkflowService:
             branch = task["branch"]
             parent_branch = self.branch_for(task["parent_id"]) if task["parent_id"] else read_project(self.projects_root, task["project_id"])["branch"]
             return {"kind": "merge", "branch": branch, "target": parent_branch, "head": self.git.head(branch), "target_head": self.git.head(parent_branch), "paths": self.git.diff_paths(parent_branch, branch), "report_number": reports[-1]["number"], "message": f"{task['title']}を統合"}
+        if task["branch"] and task["commit_hash"]:
+            parent_branch = self.branch_for(task["parent_id"])
+            return {"kind": "merge", "branch": task["branch"], "target": parent_branch, "head": self.git.head(task["branch"]), "target_head": self.git.head(parent_branch), "paths": self.git.diff_paths(parent_branch, task["branch"]), "report_number": reports[-1]["number"], "message": f"{task['title']}を統合"}
         if task["implementation"]["state"] != "succeeded":
             raise ValueError("実装と検証が完了していません")
         branch = self.branch_for(task_id)
@@ -314,24 +368,42 @@ class WorkflowService:
                 commit = self.git.commit(preview["branch"], preview["paths"], message)
                 operation.update(state="git_done", git_hash=commit)
                 self.record_operation(project_id, operation)
-                result = mark_task_completed(self.tasks_root, task_id, commit, "commit")
+                task = read_task(self.tasks_root, task_id)
+                if task["branch"]:
+                    task["commit_hash"] = commit
+                    task["updated_at"] = now()
+                    save_metadata(self.tasks_root, task)
+                    result = task
+                else:
+                    result = mark_task_completed(self.tasks_root, task_id, commit, "commit")
                 self.release_code(task_id)
                 operation["state"] = "complete"
                 self.record_operation(project_id, operation)
+                if task["branch"]:
+                    try:
+                        return self._merge_reviewed_task(task_id, self.completion_preview(task_id))
+                    except ValueError as error:
+                        raise ValueError(f"コミットは保存しました。親ブランチへの統合に失敗しました: {error}") from error
                 return result
             if expected.get("target_head") != preview["target_head"]:
                 raise ValueError("マージ先が変更されました。再確認してください")
-            project_id = read_task(self.tasks_root, task_id)["project_id"]
-            operation = self.begin_operation(project_id, "merge", task_id, preview["branch"], preview["target"])
-            message = f"{preview['message']}\n\nTask-Operation: {operation['id']}"
-            commit = self.git.merge(preview["branch"], preview["target"], message)
-            operation.update(state="git_done", git_hash=commit)
-            self.record_operation(project_id, operation)
-            result = mark_task_completed(self.tasks_root, task_id, commit, "merge")
-            self.git.remove(preview["branch"], preview["target"])
-            operation["state"] = "complete"
-            self.record_operation(project_id, operation)
-            return result
+            if expected.get("head") != preview["head"]:
+                raise ValueError("マージ元が変更されました。再確認してください")
+            return self._merge_reviewed_task(task_id, preview)
+
+    def _merge_reviewed_task(self, task_id: str, preview: dict) -> dict:
+        """Merge a reviewed task ID using preview values; return its record."""
+        project_id = read_task(self.tasks_root, task_id)["project_id"]
+        operation = self.begin_operation(project_id, "merge", task_id, preview["branch"], preview["target"])
+        message = f"{preview['message']}\n\nTask-Operation: {operation['id']}"
+        commit = self.git.merge(preview["branch"], preview["target"], message)
+        operation.update(state="git_done", git_hash=commit)
+        self.record_operation(project_id, operation)
+        result = mark_task_completed(self.tasks_root, task_id, commit, "merge")
+        self.git.remove(preview["branch"], preview["target"])
+        operation["state"] = "complete"
+        self.record_operation(project_id, operation)
+        return result
 
     def project_preview(self, project_id: str) -> dict:
         """Return final merge values for an approved project."""

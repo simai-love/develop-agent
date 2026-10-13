@@ -1240,3 +1240,8 @@ dialog input:focus,dialog textarea:focus {
 .proposal-card textarea {
   width: 100%;
 }
+.parallel-child {
+  display: block;
+  margin: 0.55rem 0;
+  cursor: pointer;
+}

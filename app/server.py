@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
         full_task = task if "plan" in task else read_task(TASKS_ROOT, task["id"])
         children = WORKFLOW.children(task["id"])
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
-        return {**task, "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
+        return {**task, "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
 
     def present_project(self, project: dict) -> dict:
         """Add task counts to project and return its API record."""
@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
         """Create a task or Agent run from JSON and return its record."""
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == "/api/projects" or path.startswith("/api/projects/") or path.startswith("/api/tasks/") and (path.endswith("/children") or path.endswith("/summary") or "/proposals/" in path):
+        if path == "/api/projects" or path.startswith("/api/projects/") or path.startswith("/api/tasks/") and (path.endswith("/children") or path.endswith("/summary") or path.endswith("/parallel-execute") or "/proposals/" in path):
             try:
                 body = self.read_json()
                 if path == "/api/projects":
@@ -163,6 +163,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path.endswith("/summary"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/summary")
                     self.send_json(202, AGENT.start_summary(task_id, body.get("additional_instruction", "")))
+                elif path.endswith("/parallel-execute"):
+                    task_id = path.removeprefix("/api/tasks/").removesuffix("/parallel-execute")
+                    self.send_json(202, AGENT.start_parallel_children(task_id, body["task_ids"]))
                 elif "/proposals/" in path:
                     parts = path.strip("/").split("/")
                     if len(parts) != 6 or parts[0] != "api" or parts[1] != "tasks" or parts[3] != "proposals":
