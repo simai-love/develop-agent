@@ -89,7 +89,8 @@ class ProjectWorkflowTest(unittest.TestCase):
             cli.chmod(0o755)
             manager = AgentManager(service.tasks_root, repo, str(cli), workflow=service)
             service.agent = manager
-            run = manager.start_summary(parent_id)
+            self.assertIn("今回の総括への追加指示（計画は変更しない）:\n結果の違いを比較する", manager._summary_prompt(parent_id, "結果の違いを比較する"))
+            run = manager.start_summary(parent_id, "結果の違いを比較する")
             for _ in range(100):
                 if manager.get_run(run["id"])["state"] != "running":
                     break

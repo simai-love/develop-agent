@@ -162,7 +162,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(201, self.present_task(WORKFLOW.create_child(task_id, body["title"], body.get("initial_plan", ""))))
                 elif path.endswith("/summary"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/summary")
-                    self.send_json(202, AGENT.start_summary(task_id))
+                    self.send_json(202, AGENT.start_summary(task_id, body.get("additional_instruction", "")))
                 elif "/proposals/" in path:
                     parts = path.strip("/").split("/")
                     if len(parts) != 6 or parts[0] != "api" or parts[1] != "tasks" or parts[3] != "proposals":
@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, self.present_task(WORKFLOW.complete_task(task_id, body)))
             else:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/execute")
-                self.send_json(202, AGENT.start_implementation(task_id))
+                self.send_json(202, AGENT.start_implementation(task_id, body.get("additional_instruction", "")))
         except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
             self.send_json(400, {"error": str(error)})
 
