@@ -101,10 +101,12 @@ class AgentManager:
             raise ValueError("子タスクがある場合は親の総括を作成してください")
         return self._start(task_id, "implement", "plan", "", additional_instruction)
 
-    def start_parallel_children(self, parent_id: str, task_ids: list[str]) -> list[dict]:
-        """Start selected sibling IDs in separate worktrees; return their runs."""
+    def start_parallel_children(self, parent_id: str, task_ids: list[str], additional_instruction: str = "") -> list[dict]:
+        """Start sibling IDs with an optional shared instruction; return their runs."""
         if not self.workflow:
             raise ValueError("並列実行にはGit作業領域が必要です")
+        if not isinstance(additional_instruction, str):
+            raise ValueError("追加指示は文字列で入力してください")
         with self.lock:
             if self.active_tasks:
                 raise ValueError("Agentの実行が終わってから並列実行してください")
@@ -113,7 +115,7 @@ class AgentManager:
                 if not self.cli_paths[task["provider"]]:
                     raise ValueError(f"{task['provider']} CLI is not installed")
             self.workflow.prepare_parallel_children(parent_id, task_ids)
-            return [self.start_implementation(task_id) for task_id in task_ids]
+            return [self.start_implementation(task_id, additional_instruction) for task_id in task_ids]
 
     def start_summary(self, task_id: str, additional_instruction: str = "") -> dict:
         """Start a parent summary with an optional one-run instruction; return its run."""

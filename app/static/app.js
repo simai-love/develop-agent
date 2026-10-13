@@ -1095,14 +1095,24 @@ function bindEvents() {
     event.target.value = '';
     await loadEvidence();
   });
-  $('#parallel-button').addEventListener('click', async () => {
+  $('#parallel-button').addEventListener('click', () => {
+    const names = state.tasks.filter((item) => parallelSelection.ids.has(item.id)).map((item) => item.title);
+    if (names.length < 2) return;
+    $('#parallel-selection-summary').textContent = `選択した子タスク: ${names.join('、')}`;
+    $('#parallel-dialog').showModal();
+    $('#parallel-instruction').focus();
+  });
+  $('#cancel-parallel').addEventListener('click', () => $('#parallel-dialog').close());
+  $('#confirm-parallel').addEventListener('click', async () => {
     try {
       const taskIds = [...parallelSelection.ids];
       if (taskIds.length < 2) return;
       await savePendingDrafts();
       const runs = await api(`/api/tasks/${state.task.id}/parallel-execute`, {
-        method: 'POST', body: JSON.stringify({ task_ids: taskIds }),
+        method: 'POST', body: JSON.stringify({ task_ids: taskIds, additional_instruction: $('#parallel-instruction').value }),
       });
+      $('#parallel-dialog').close();
+      $('#parallel-instruction').value = '';
       parallelSelection.ids.clear();
       await refreshTasks();
       for (const run of runs) watchRun(run);

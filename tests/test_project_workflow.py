@@ -81,6 +81,56 @@ class ProjectWorkflowTest(unittest.TestCase):
             self.assertNotEqual(read_task(service.tasks_root, blocked_id)["status"], "completed")
             self.assertTrue(service.git.clean(parent_path))
 
+    def test_parallel_agent_runs_receive_shared_instruction(self):
+        """Run two sibling agents concurrently and pass the one-run instruction to both."""
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            (repo / ".gitignore").write_text("tasks/\nprojects/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=repo, check=True)
+            service = WorkflowService(repo, repo / "tasks", repo / "projects")
+            project = service.create_project("並列", "parallel", "親")
+            parent_id = project["first_task_id"]
+            children = [service.create_child(parent_id, title) for title in ("子A", "子B")]
+            for child in children:
+                write_text(service.tasks_root / child["id"] / "plan.md", "# 計画\n")
+                set_readiness(service.tasks_root, child["id"], True, "# 計画\n", "実装可能")
+            cli = Path(temporary) / "fake-codex"
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys, time\n"
+                "from pathlib import Path\n"
+                "prompt = sys.stdin.read()\n"
+                "task = Path(sys.argv[sys.argv.index('--add-dir') + 1])\n"
+                "(task / 'received-instruction.txt').write_text(prompt, encoding='utf-8')\n"
+                "Path('feature.txt').write_text(task.name + '\\n', encoding='utf-8')\n"
+                "(task / 'report-draft.md').write_text('# 検証\\n成功\\n', encoding='utf-8')\n"
+                "time.sleep(0.2)\n"
+                "data = {'message': '完了', 'outcome': 'supported', 'needs_followup': False, "
+                "'evidence_files': [], 'child_task_proposals': [], 'commit_message': '並列実装'}\n"
+                "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            manager = AgentManager(service.tasks_root, repo, str(cli), workflow=service)
+            service.agent = manager
+            runs = manager.start_parallel_children(parent_id, [child["id"] for child in children], "互換性を確認")
+            self.assertEqual(len(runs), 2)
+            for _ in range(100):
+                if all(manager.get_run(run["id"])["state"] != "running" for run in runs):
+                    break
+                time.sleep(0.02)
+            self.assertEqual([manager.get_run(run["id"])["state"] for run in runs], ["succeeded", "succeeded"])
+            for child in children:
+                task_path = service.tasks_root / child["id"]
+                self.assertIn("今回の実行への追加指示（計画は変更しない）:\n互換性を確認", (task_path / "received-instruction.txt").read_text(encoding="utf-8"))
+                self.assertEqual(read_task(service.tasks_root, child["id"])["plan"], "# 計画\n")
+            self.assertFalse((service.code_path(parent_id) / "feature.txt").exists())
+
     def test_child_commits_merge_into_parent_then_dev(self):
         """Build a nested project and check commit and merge outputs."""
         with tempfile.TemporaryDirectory() as temporary:

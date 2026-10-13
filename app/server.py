@@ -165,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(202, AGENT.start_summary(task_id, body.get("additional_instruction", "")))
                 elif path.endswith("/parallel-execute"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/parallel-execute")
-                    self.send_json(202, AGENT.start_parallel_children(task_id, body["task_ids"]))
+                    self.send_json(202, AGENT.start_parallel_children(task_id, body["task_ids"], body.get("additional_instruction", "")))
                 elif "/proposals/" in path:
                     parts = path.strip("/").split("/")
                     if len(parts) != 6 or parts[0] != "api" or parts[1] != "tasks" or parts[3] != "proposals":
