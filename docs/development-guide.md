@@ -47,13 +47,13 @@ flowchart LR
 | 計画原文の編集 | 計画編集 → `PATCH /api/tasks/<id>` | `storage.update_task` | `plan.md` と `task.json`、既存の実装可否を失効 | 更新した計画と状態 |
 | 分割案を承認 | 提案カード → `POST /api/tasks/<id>/proposals/<proposal_id>/approve` | `WorkflowService.create_child` | 最初の子なら `task/<親の短い名前>-<id>` と worktree、子 `task.json`、親の分割案 | 作成した子タスク |
 | 手動で子を作成 | 子作成画面 → `POST /api/tasks/<id>/children` | `WorkflowService.create_child` | 同上。提案承認記録はなし | 作成した子タスク |
-| 実装と初回検証 | 確認後の実装ボタン → `POST /api/tasks/<id>/execute` | `AgentManager.start_implementation`・`_work` | worktree のコード、`report-draft.md` から `reports/0001.md` などへ保存、`task.json`・`chat_result.json`。この時点でコミットしない | 実行 ID と後続のレポート |
+| 実装と初回検証 | 確認後の実装ボタン → `POST /api/tasks/<id>/execute` | `AgentManager.start_implementation`・`_work` | 任意の `additional_instruction` はその回のプロンプトだけに追加する。worktree のコード、`report-draft.md` から `reports/0001.md` などへ保存、`task.json`・`chat_result.json`。この時点でコミットしない | 実行 ID と後続のレポート |
 | 実行確認 | 画面の更新 → `GET /api/runs/<id>`、`GET /api/tasks/<id>` | `AgentManager.get_run`・`Handler.present_task` | 読み取りのみ。実行履歴はメモリ内 | 進捗、完了結果、表示状態 |
 | 02 追加検証・修正 | 02 チャット → `POST /api/tasks/<id>/chat` (`phase: result`) | `AgentManager.start_chat`・`_work` | 必要なら worktree のコード、結果が得られれば次の番号の `reports/`、`chat_result.json`・`task.json` | 実行 ID と新しい結果。結果がなければレポートは増やさない |
 | 変更ファイルの差分確認 | タスク画面 → `GET /api/tasks/<id>/diff`、`?path=<ファイル>` | `WorkflowService.task_diff` | 読み取りのみ | 作業中の未コミット差分、完了後のコミット・マージ差分 |
 | 資料追加 | 02 の資料選択 → `POST /api/tasks/<id>/evidence?name=...` | `app/evidence.py` の `save_evidence` | `tasks/<id>/evidence/` | 資料の情報と表示 |
 | 葉タスクの完了 | 完了確認 → `GET /api/tasks/<id>/completion-preview`、確認後 `POST /api/tasks/<id>/complete` | `WorkflowService.completion_preview`・`complete_task` | 対象差分をコミット、`operations/`・`task.json` | 完了状態と commit hash |
-| 親の総括 | 子が全て完了 → `POST /api/tasks/<id>/summary` | `AgentManager.start_summary` | 総括レポートと根拠を `reports/`・`task.json` に保存。コード変更なし | 実行 ID と総括 |
+| 親の総括 | 子が全て完了 → `POST /api/tasks/<id>/summary` | `AgentManager.start_summary` | 任意の `additional_instruction` はその回のプロンプトだけに追加する。総括レポートと根拠を `reports/`・`task.json` に保存。コード変更なし | 実行 ID と総括 |
 | 親タスクの完了 | 総括確認 → `GET /api/tasks/<id>/completion-preview`、`POST /api/tasks/<id>/complete` | `WorkflowService.complete_task` | 親ブランチを上位へ `--no-ff` マージ、`operations/`・`task.json`、親 worktree とブランチを削除 | 完了状態と merge hash |
 | プロジェクト完了 | 全タスク完了 → `GET /api/projects/<id>/completion-preview`、`POST /api/projects/<id>/complete` | `WorkflowService.project_preview`・`complete_project` | `dev` へ `--no-ff` マージ、`operations/`・`project.json`、プロジェクト worktree とブランチを削除 | 完了状態と merge hash |
 

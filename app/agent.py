@@ -90,8 +90,8 @@ class AgentManager:
             raise ValueError("Message is required")
         return self._start(task_id, "chat", phase, message.strip())
 
-    def start_implementation(self, task_id: str) -> dict:
-        """Start implementation of a planned task ID; return its run record."""
+    def start_implementation(self, task_id: str, additional_instruction: str = "") -> dict:
+        """Start a planned task with an optional one-run instruction; return its run."""
         task = read_task(self.tasks_root, task_id)
         if not task["can_implement"]:
             raise ValueError("Agent has not approved the saved plan for implementation")
@@ -99,10 +99,10 @@ class AgentManager:
             raise ValueError("Completed tasks cannot be implemented again")
         if self.workflow and self.workflow.children(task_id):
             raise ValueError("子タスクがある場合は親の総括を作成してください")
-        return self._start(task_id, "implement", "plan", "")
+        return self._start(task_id, "implement", "plan", "", additional_instruction)
 
-    def start_summary(self, task_id: str) -> dict:
-        """Start a parent summary and return its run record."""
+    def start_summary(self, task_id: str, additional_instruction: str = "") -> dict:
+        """Start a parent summary with an optional one-run instruction; return its run."""
         task = read_task(self.tasks_root, task_id)
         if task["status"] == "completed":
             raise ValueError("完了済みタスクの総括は更新できません")
@@ -112,7 +112,7 @@ class AgentManager:
             raise ValueError("総括する子タスクがありません")
         if any(child["status"] != "completed" for child in self.workflow.children(task_id)):
             raise ValueError("全ての子タスクを完了してください")
-        return self._start(task_id, "summary", "result", "")
+        return self._start(task_id, "summary", "result", "", additional_instruction)
 
     def get_run(self, run_id: str) -> dict | None:
         """Return a copy of run ID or None when it does not exist."""
@@ -136,8 +136,10 @@ class AgentManager:
                 entries.append({"id": activity_id, "label": str(activity["label"])[:800], "state": activity["state"]})
                 del entries[:-12]
 
-    def _start(self, task_id: str, kind: str, phase: str, message: str) -> dict:
+    def _start(self, task_id: str, kind: str, phase: str, message: str, additional_instruction: str = "") -> dict:
         """Register one task run and start its worker; return the run record."""
+        if not isinstance(additional_instruction, str):
+            raise ValueError("追加指示は文字列で入力してください")
         writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         with self.lock:
             task = read_task(self.tasks_root, task_id)
@@ -158,7 +160,7 @@ class AgentManager:
             if writes_code and self.workflow and task["project_id"]:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "activity": []}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "activity": []}
             self.runs[run_id] = run
             self.active_tasks.add(task_id)
             if writes_code:
@@ -192,7 +194,7 @@ class AgentManager:
             current_task = read_task(self.tasks_root, task_id)
             previous_reports = [(task_path / report["file"], report["content"]) for report in current_task["reports"]]
             previous_plan = current_task["plan"] if kind == "chat" and phase == "plan" else None
-            prompt = self._implementation_prompt(task_id) if kind == "implement" else self._summary_prompt(task_id) if kind == "summary" else self._chat_prompt(task_id, phase)
+            prompt = self._implementation_prompt(task_id, run["additional_instruction"]) if kind == "implement" else self._summary_prompt(task_id, run["additional_instruction"]) if kind == "summary" else self._chat_prompt(task_id, phase)
             schema_name = "plan-response.schema.json" if kind == "chat" and phase == "plan" else "validation-response.schema.json"
             schema_path = SKILL_ROOT / "references" / schema_name
             if run["provider"] == "codex":
@@ -351,8 +353,8 @@ class AgentManager:
             f"この画面の会話:\n{conversation}"
         )
 
-    def _implementation_prompt(self, task_id: str) -> str:
-        """Build an implementation prompt from task ID; return its text."""
+    def _implementation_prompt(self, task_id: str, additional_instruction: str = "") -> str:
+        """Build an implementation prompt from task ID and instruction; return text."""
         task = read_task(self.tasks_root, task_id)
         return (
             "日本語で応答してください。以下の承認済み計画に従い、このリポジトリで実際にコードを変更してください。"
@@ -365,10 +367,11 @@ class AgentManager:
             "検証で仮説が支持されない場合も観測結果を残し、指定のJSON Schemaで結論を返してください。\n"
             f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md、assets/result-template.md を読んでください。\n"
             f"タスク: {task['title']}\nタスク保存先: {task_dir(self.tasks_root, task_id)}\n計画:\n{task['plan']}"
+            + (f"\n今回の実行への追加指示（計画は変更しない）:\n{additional_instruction}" if additional_instruction else "")
         )
 
-    def _summary_prompt(self, task_id: str) -> str:
-        """Build a read-only summary prompt for a parent task ID."""
+    def _summary_prompt(self, task_id: str, additional_instruction: str = "") -> str:
+        """Build a read-only summary prompt from task ID and instruction; return text."""
         task = read_task(self.tasks_root, task_id)
         children = [read_task(self.tasks_root, child["id"]) for child in self.workflow.children(task_id)]
         details = "\n".join(f"{child['title']} / report={child['reports'][-1]['number'] if child['reports'] else 'なし'} / commit={child['merge_hash'] or child['commit_hash']} / result={child['result']}" for child in children)
@@ -378,6 +381,7 @@ class AgentManager:
             f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md を読んでください。"
             f"総括を {report_draft_path(self.tasks_root, task_id)} に保存し、検証用JSON Schemaで返してください。"
             f"親タスク: {task['title']}\n計画: {task['plan']}\n分割前のcommit: {task['pre_split_commit']}\n分割前の検証: {task['result']}\n子タスク:\n{details}"
+            + (f"\n今回の総括への追加指示（計画は変更しない）:\n{additional_instruction}" if additional_instruction else "")
         )
 
     def _validate_result(self, task_id: str, response: dict) -> bool:

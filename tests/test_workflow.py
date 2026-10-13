@@ -17,6 +17,18 @@ from app.task_status import display_status
 class WorkflowTest(unittest.TestCase):
     """Exercise a planning exchange and its implementation gate."""
 
+    def test_implementation_instruction_is_added_without_changing_plan(self):
+        """Check a one-run instruction enters the prompt and leaves the plan intact."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            task = create_task(root, "追加指示")
+            update_task(root, task["id"], {"plan": "# 計画\n実装する"})
+            manager = AgentManager(root, root)
+            prompt = manager._implementation_prompt(task["id"], "互換性も確かめる")
+            self.assertIn("今回の実行への追加指示（計画は変更しない）:\n互換性も確かめる", prompt)
+            self.assertNotIn("今回の実行への追加指示", manager._implementation_prompt(task["id"]))
+            self.assertEqual(read_task(root, task["id"])["plan"], "# 計画\n実装する")
+
     def test_display_status_shows_next_action_and_active_runs(self):
         """Check task and chat inputs produce the user's visible next step."""
         with tempfile.TemporaryDirectory() as temporary:

@@ -1024,13 +1024,15 @@ function bindEvents() {
   });
   $('#execute-button').addEventListener('click', async () => {
     $('#execute-dialog').showModal();
+    $('#execute-instruction').focus();
   });
   $('#cancel-execute').addEventListener('click', () => $('#execute-dialog').close());
   $('#confirm-execute').addEventListener('click', async () => {
     $('#execute-dialog').close();
     try {
       await savePendingDrafts();
-      const run = await api(`/api/tasks/${state.task.id}/execute`, { method: 'POST', body: '{}' });
+      const run = await api(`/api/tasks/${state.task.id}/execute`, { method: 'POST', body: JSON.stringify({ additional_instruction: $('#execute-instruction').value }) });
+      $('#execute-instruction').value = '';
       state.task = await api(`/api/tasks/${state.task.id}`);
       await refreshTasks();
       watchRun(run);
@@ -1107,9 +1109,16 @@ function bindEvents() {
     } catch (error) { toast(error.message); }
     finally { $('#confirm-commit').disabled = false; }
   });
-  $('#summary-button').addEventListener('click', async () => {
+  $('#summary-button').addEventListener('click', () => {
+    $('#summary-dialog').showModal();
+    $('#summary-instruction').focus();
+  });
+  $('#cancel-summary').addEventListener('click', () => $('#summary-dialog').close());
+  $('#confirm-summary').addEventListener('click', async () => {
+    $('#summary-dialog').close();
     try {
-      const run = await api(`/api/tasks/${state.task.id}/summary`, { method: 'POST', body: '{}' });
+      const run = await api(`/api/tasks/${state.task.id}/summary`, { method: 'POST', body: JSON.stringify({ additional_instruction: $('#summary-instruction').value }) });
+      $('#summary-instruction').value = '';
       state.task = await api(`/api/tasks/${state.task.id}`);
       watchRun(run);
     } catch (error) { toast(error.message); }
