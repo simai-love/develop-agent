@@ -48,7 +48,7 @@ flowchart LR
 | 分割案を承認 | 提案カード → `POST /api/tasks/<id>/proposals/<proposal_id>/approve` | `WorkflowService.create_child` | 最初の子なら `task/<親の短い名前>-<id>` と worktree、子 `task.json`、親の分割案 | 作成した子タスク |
 | 手動で子を作成 | 子作成画面 → `POST /api/tasks/<id>/children` | `WorkflowService.create_child` | 同上。提案承認記録はなし | 作成した子タスク |
 | 実装と初回検証 | 確認後の実装ボタン → `POST /api/tasks/<id>/execute` | `AgentManager.start_implementation`・`_work` | 任意の `additional_instruction` はその回のプロンプトだけに追加する。worktree のコード、`report-draft.md` から `reports/0001.md` などへ保存、`task.json`・`chat_result.json`。この時点でコミットしない | 実行 ID と後続のレポート |
-| 子タスクの並列実装 | 親の計画画面 → `POST /api/tasks/<id>/parallel-execute` | `AgentManager.start_parallel_children`・`WorkflowService.prepare_parallel_children` | 選択した計画済みの葉に個別ブランチと worktree を作成し、独立した Agent 実行を開始。親には未承認変更を入れない | 実行 ID の配列 |
+| 子タスクの並列実装 | 親の計画画面 → `POST /api/tasks/<id>/parallel-execute` | `AgentManager.start_parallel_children`・`WorkflowService.prepare_parallel_children` | 選択した計画済みの葉に個別ブランチと worktree を作成し、任意の共通 `additional_instruction` をその回だけに渡して独立した Agent 実行を開始。親には未承認変更を入れない | 実行 ID の配列 |
 | 実行確認 | 画面の更新 → `GET /api/runs/<id>`、`GET /api/tasks/<id>` | `AgentManager.get_run`・`Handler.present_task` | 読み取りのみ。実行履歴はメモリ内 | 進捗、完了結果、表示状態 |
 | 02 追加検証・修正 | 02 チャット → `POST /api/tasks/<id>/chat` (`phase: result`) | `AgentManager.start_chat`・`_work` | 必要なら worktree のコード、結果が得られれば次の番号の `reports/`、`chat_result.json`・`task.json` | 実行 ID と新しい結果。結果がなければレポートは増やさない |
 | 変更ファイルの差分確認 | タスク画面 → `GET /api/tasks/<id>/diff`、`?path=<ファイル>` | `WorkflowService.task_diff` | 読み取りのみ | 作業中の未コミット差分、完了後のコミット・マージ差分 |
