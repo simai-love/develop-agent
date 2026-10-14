@@ -53,8 +53,8 @@ flowchart LR
 | 02 追加検証・修正 | 02 チャット → `POST /api/tasks/<id>/chat` (`phase: result`) | `AgentManager.start_chat`・`_work` | 必要なら worktree のコード、結果が得られれば次の番号の `reports/`、`chat_result.json`・`task.json` | 実行 ID と新しい結果。結果がなければレポートは増やさない |
 | 変更ファイルの差分確認 | タスク画面 → `GET /api/tasks/<id>/diff`、`?path=<ファイル>` | `WorkflowService.task_diff` | 読み取りのみ | 作業中の未コミット差分、完了後のコミット・マージ差分 |
 | 資料追加 | 02 の資料選択 → `POST /api/tasks/<id>/evidence?name=...` | `app/evidence.py` の `save_evidence` | `tasks/<id>/evidence/` | 資料の情報と表示 |
-| 葉タスクの完了 | 完了確認 → `GET /api/tasks/<id>/completion-preview`、確認後 `POST /api/tasks/<id>/complete` | `WorkflowService.completion_preview`・`complete_task` | 対象差分をコミット、`operations/`・`task.json` | 完了状態と commit hash |
-| 並列実装した葉の完了 | 個別レビュー後に同じ完了 API | `WorkflowService.complete_task` | 子ブランチへコミットし、親へ `--no-ff` マージ。競合時はコミット済みの子ブランチを保持し、再度の完了操作で統合を試す | 完了状態と commit hash・merge hash |
+| 葉タスクの完了 | 完了確認 → `GET /api/tasks/<id>/completion-preview`、確認後 `POST /api/tasks/<id>/complete` | `AgentManager.start_commit`・`WorkflowService.reconcile_agent_commit` | Agent が対象差分を一件以上に分けてコミット。GUI が対象パス・最終 Git tree・操作 ID を照合し、全 commit hash を `task.json` に保存。途中停止時は残りから再開できる | 実行 ID、後に完了状態と commit hash の一覧 |
+| 並列実装した葉の完了 | 個別レビュー後に同じ完了 API | `AgentManager.start_commit`・`WorkflowService.reconcile_agent_commit` | 子ブランチへコミットし、GUI が親へ `--no-ff` マージ。競合時はコミット済みの子ブランチを保持し、再度の完了操作で統合を試す | 実行 ID、後に完了状態と commit hash・merge hash |
 | 親の総括 | 子が全て完了 → `POST /api/tasks/<id>/summary` | `AgentManager.start_summary` | 任意の `additional_instruction` はその回のプロンプトだけに追加する。総括レポートと根拠を `reports/`・`task.json` に保存。コード変更なし | 実行 ID と総括 |
 | 親タスクの完了 | 総括確認 → `GET /api/tasks/<id>/completion-preview`、`POST /api/tasks/<id>/complete` | `WorkflowService.complete_task` | 親ブランチを上位へ `--no-ff` マージ、`operations/`・`task.json`、親 worktree とブランチを削除 | 完了状態と merge hash |
 | プロジェクト完了 | 全タスク完了 → `GET /api/projects/<id>/completion-preview`、`POST /api/projects/<id>/complete` | `WorkflowService.project_preview`・`complete_project` | `dev` へ `--no-ff` マージ、`operations/`・`project.json`、プロジェクト worktree とブランチを削除 | 完了状態と merge hash |
@@ -101,16 +101,23 @@ sequenceDiagram
   API-->>UI: 完了プレビュー
   User->>UI: 内容を確認して完了
   UI->>API: POST 完了
-  API->>Flow: プレビューと現在値を再照合
-  Flow->>Store: 操作開始を記録
-  Flow->>Git: 葉は commit、親・プロジェクトは --no-ff merge
-  Git-->>Flow: commit / merge hash
-  Flow->>Store: Git 結果、完了状態、操作完了を記録
-  Flow-->>API: 更新済みタスクまたはプロジェクト
-  API-->>UI: 完了状態
+  alt 葉タスク
+    API->>Flow: 承認時の tree と現在値を再照合
+    Flow->>Store: コミット操作開始を記録
+    API->>Agent: コミット専用実行を開始
+    Agent->>Git: 意味のある単位で一件以上コミット
+    Agent->>Flow: 作成した履歴の照合を依頼
+    Flow->>Store: 全 commit hash と完了状態を記録
+    API-->>UI: 実行 ID、後に完了状態
+  else 親・プロジェクト
+    API->>Flow: プレビューと現在値を再照合
+    Flow->>Git: --no-ff merge
+    Flow->>Store: merge hash と完了状態を記録
+    API-->>UI: 完了状態
+  end
 ```
 
-プレビュー後の確認で初めて Git 操作に進みます。葉は差分をコミットし、親は上位ブランチ、プロジェクトは `dev` へマージします。成功した Git 操作を記録し、状態を完了へ更新します。旧データ移行に限り、差分のない検証済み葉を履歴上の完了として扱う分岐があります。
+プレビュー後の確認で初めて Git 操作に進みます。葉のコミット専用実行では Agent が変更を分け、GUI が各コミットと承認時の Git tree を照合します。親は上位ブランチ、プロジェクトは `dev` へ GUI がマージします。成功した Git 操作を記録し、状態を完了へ更新します。旧データ移行に限り、差分のない検証済み葉を履歴上の完了として扱う分岐があります。
 
 ## 4. タスクとプロジェクトの状態
 
@@ -122,7 +129,7 @@ sequenceDiagram
 | `verifying` | レポートを保存、実装・検証が成功 | 「ユーザー待ち／検証結果を確認」。 |
 | `completed` | ユーザー確認後の完了 API が成功 | 「完了済み」。 |
 
-保存値は `tasks/<id>/task.json` にあり、表示値は `app/task_status.py` がチャット・実行中フラグ・子の状態から API 応答時に求めます。最初のタスクも子タスクと同じ行描画を使います。子が未完了の親は「進行中／子タスクの完了を待機」、全子が完了した親は総括またはマージを促します。画面側も開始直後の実行を一時的に「実行中」と表示し、所属プロジェクトにも実行中の状態を示します。
+保存値は `tasks/<id>/task.json` にあり、表示値は `app/task_status.py` がチャット・実行中フラグ・子の状態から API 応答時に求めます。コミット専用実行が途中で止まった場合は `commit_hashes` に作成済みの ID、`commit_pending` に残りの作業を記録します。最初のタスクも子タスクと同じ行描画を使います。子が未完了の親は「進行中／子タスクの完了を待機」、全子が完了した親は総括またはマージを促します。画面側も開始直後の実行を一時的に「実行中」と表示し、所属プロジェクトにも実行中の状態を示します。
 
 | 保存値 (`project.json`) | 契機 | 画面表示 |
 | --- | --- | --- |
@@ -159,7 +166,7 @@ flowchart TD
   Project -->|プロジェクト完了時に --no-ff merge| Dev
 ```
 
-新規プロジェクトは `dev` を起点に専用ブランチと worktree を作ります。親に初めて子を作る時だけ親名を含む `task/<短い名前>-<id>` を作り、さらに階層が深い場合も同じ規則です。既存ブランチは改名しません。プロジェクト直下のタスクはプロジェクトブランチを共有します。通常の葉は所属する最も近い作業ブランチで変更し、完了時にその変更をコミットします。並列実装に選ばれた兄弟葉は個別ブランチで変更し、人の確認でコミットした後、別の確認で親へ `--no-ff` マージします。競合時はマージを abort して子ブランチとコミットを保持します。親とプロジェクトはユーザーの完了確認後に上位へマージし、統合したブランチと worktree を外します。Git 操作は `operations/` に記録され、サーバー起動時に未完了記録と Git の HEAD を照合します。既存データの移行経路は `app/workflow.py` の `migrate_legacy` と `acknowledge_migration` を確認してください。
+新規プロジェクトは `dev` を起点に専用ブランチと worktree を作ります。親に初めて子を作る時だけ親名を含む `task/<短い名前>-<id>` を作り、さらに階層が深い場合も同じ規則です。既存ブランチは改名しません。プロジェクト直下のタスクはプロジェクトブランチを共有します。通常の葉は所属する最も近い作業ブランチで変更し、完了時に Agent が一件以上のコミットに分けます。並列実装に選ばれた兄弟葉は個別ブランチで変更し、人の確認後に Agent がコミットすると GUI が親へ `--no-ff` マージします。競合時はマージを abort して子ブランチとコミットを保持します。親とプロジェクトはユーザーの完了確認後に上位へマージし、統合したブランチと worktree を外します。Git 操作は `operations/` に記録され、サーバー起動時に未完了記録と Git の HEAD を照合します。既存データの移行経路は `app/workflow.py` の `migrate_legacy` と `acknowledge_migration` を確認してください。
 
 ## 7. Agent と画面の境界
 
@@ -169,7 +176,8 @@ flowchart TD
 | 実装 | worktree でコード変更と初回検証、`report-draft.md` 作成、短い JSON 結論 | GUI が番号付きレポート・変更ファイル・状態を保存。利用者が結果を確認する。 |
 | 02 検証 | 追加検証、必要なら修正・再検証。新しい結果があれば原稿を作る | GUI が新しいレポートを追加。利用者が追加依頼・完了判断を行う。 |
 | 親の総括 | 子のレポートと commit を根拠に結果を整理。コード変更なし | GUI が総括を保存。利用者の確認後に GUI が Git マージする。 |
-| 完了 | Git コミット・マージを実行しない | GUI がプレビューと再照合、Git 操作、`task.json` / `project.json` 更新を行う。 |
+| 葉タスクの完了 | ユーザー確認後の専用実行で、変更を意味のある単位に分けてコミットする。コードとレポートは変更しない | GUI が承認時との差分とコミットを照合し、状態を保存する。並列葉の親へのマージも GUI が行う。 |
+| 親・プロジェクトの完了 | Git 操作を行わない | GUI がプレビューと再照合、マージ、`task.json` / `project.json` 更新を行う。 |
 
 JSON 応答は画面の短いメッセージ・判定・提案に使い、検証本文は Markdown ファイルです。`task.json`、チャット、番号付きレポートの管理は GUI 側です。実行中は `GET /api/runs/<id>` を約 1.5 秒ごとに取得し、再表示時はタスク応答の `active_run_id` から復帰します。直近の作業履歴はメモリ内なのでサーバー再起動では保持されません。画面別の規則は[スキルの手順](../.codex/skills/research-workflow/SKILL.md)と[01・02 の指示](../.codex/skills/research-workflow/references/README.md)を確認してください。
 

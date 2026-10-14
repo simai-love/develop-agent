@@ -1,7 +1,9 @@
 """Manage task branches and their isolated Git worktrees."""
 
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -94,6 +96,30 @@ class GitWorkspace:
     def clean(self, path: Path) -> bool:
         """Return whether path has no tracked or untracked changes."""
         return not self.changed(path)
+
+    def worktree_tree(self, path: Path) -> str:
+        """Return a Git tree for path's tracked and untracked working files."""
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            for args in (("read-tree", "HEAD"), ("add", "-A")):
+                result = subprocess.run(["git", *args], cwd=path, env=environment, capture_output=True, text=True)
+                if result.returncode:
+                    raise ValueError(result.stderr.strip() or "作業内容を記録できません")
+            result = subprocess.run(["git", "write-tree"], cwd=path, env=environment, capture_output=True, text=True)
+            if result.returncode:
+                raise ValueError(result.stderr.strip() or "作業内容を記録できません")
+            return result.stdout.strip()
+
+    def commits_since(self, branch: str, base: str) -> list[str]:
+        """Return first-parent commit hashes after base on branch, oldest first."""
+        self.git("merge-base", "--is-ancestor", base, branch)
+        return self.git("rev-list", "--reverse", "--first-parent", f"{base}..{branch}").stdout.splitlines()
+
+    def worktree_diff_files(self, path: Path, base: str) -> list[str]:
+        """Return tracked and untracked paths differing from base in path."""
+        tracked = subprocess.run(["git", "diff", "--name-only", "-z", base], cwd=path, capture_output=True, check=True).stdout
+        untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=path, capture_output=True, check=True).stdout
+        return sorted({part.decode("utf-8") for part in (tracked + untracked).split(b"\0") if part})
 
     def diff_paths(self, source: str, target: str) -> list[str]:
         """Return paths differing between source and target refs."""

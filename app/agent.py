@@ -130,6 +130,79 @@ class AgentManager:
             raise ValueError("全ての子タスクを完了してください")
         return self._start(task_id, "summary", "result", "", additional_instruction)
 
+    def start_commit(self, task_id: str, expected: dict, instruction: str = "") -> dict:
+        """Start an approved Agent commit run for task ID; return its run record."""
+        if not isinstance(instruction, str):
+            raise ValueError("コミット方針は文字列で入力してください")
+        with self.lock:
+            if self.active_tasks:
+                raise ValueError("Agentの実行が終わってからタスクを完了してください")
+            task = read_task(self.tasks_root, task_id)
+            if not self.cli_paths[task["provider"]]:
+                raise ValueError(f"{task['provider']} CLI is not installed")
+            operation = self.workflow.begin_agent_commit(task_id, expected)
+            run_id = uuid4().hex
+            run = {"id": run_id, "task_id": task_id, "kind": "commit", "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": []}
+            self.runs[run_id] = run
+            self.active_tasks.add(task_id)
+        threading.Thread(target=self._work_commit, args=(run_id, operation, instruction.strip()), daemon=True).start()
+        return dict(run)
+
+    def _work_commit(self, run_id: str, operation: dict, instruction: str) -> None:
+        """Ask the Agent to split approved changes into commits and record the result."""
+        run = self.get_run(run_id)
+        task_id = run["task_id"]
+        task_path = task_dir(self.tasks_root, task_id)
+        output_path = task_path / f".codex-{run_id}.txt"
+        error = None
+        try:
+            code_root = self.workflow.code_path(task_id)
+            common_dir = self.workflow.git.git("rev-parse", "--git-common-dir", cwd=code_root).stdout.strip()
+            common_path = (code_root / common_dir).resolve()
+            prompt = self._commit_prompt(task_id, operation, instruction)
+            schema_path = SKILL_ROOT / "references" / "commit-response.schema.json"
+            if run["provider"] == "codex":
+                command = [self.cli_paths["codex"], "exec", "--json", "--output-last-message", str(output_path), "--cd", str(code_root), "--add-dir", str(task_path), "--add-dir", str(common_path)]
+                if run["model"]:
+                    command += ["--model", run["model"]]
+                command += ["--output-schema", str(schema_path), "--sandbox", "workspace-write", "-"]
+            else:
+                command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+                if run["model"]:
+                    command += ["--model", run["model"]]
+                command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
+            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity))
+            if result.returncode:
+                error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
+            self.workflow.reconcile_agent_commit(operation)
+            outcome = {"state": "succeeded", "message": "コミットを作成し、タスクを完了しました"}
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as failure:
+            detail = str(failure)
+            outcome = {"state": "failed", "message": f"{error}: {detail}" if error else detail}
+        finally:
+            output_path.unlink(missing_ok=True)
+        with self.lock:
+            self.runs[run_id].update(outcome)
+            self.active_tasks.discard(task_id)
+
+    def _commit_prompt(self, task_id: str, operation: dict, instruction: str) -> str:
+        """Build a commit-only prompt from task ID and operation; return its text."""
+        task = read_task(self.tasks_root, task_id)
+        return (
+            "日本語で作業してください。ユーザーがこのタスクの変更全体を確認し、完了を承認しました。"
+            "現在の未コミット変更だけを、意味のある単位で一件以上の通常のGitコミットに分けてください。"
+            "小さな変更なら一件にまとめて構いません。別の目的の変更は分け、必要なら同じファイルの変更も部分的にステージしてください。"
+            "コミットメッセージは簡潔な日本語にしてください。各コミット本文の末尾に指定の Task-Operation 行を正確に入れてください。"
+            "コード、計画、レポートを変更せず、対象外のファイルをコミットしないでください。"
+            "マージ、rebase、reset、amend、ブランチ操作は行わないでください。"
+            "全ての変更をコミットしたら作業ツリーを空にし、JSONで結果を短く返してください。\n"
+            f"最初に {SKILL_ROOT / 'SKILL.md'} を読んでください。\n"
+            f"タスク: {task['title']}\n作業ブランチ: {operation['branch']}\n"
+            f"対象ファイル: {json.dumps(operation['expected_paths'], ensure_ascii=False)}\n"
+            f"Task-Operation: {operation['id']}\n"
+            + (f"ユーザーのコミット方針:\n{instruction}\n" if instruction else "")
+        )
+
     def get_run(self, run_id: str) -> dict | None:
         """Return a copy of run ID or None when it does not exist."""
         with self.lock:
@@ -159,6 +232,8 @@ class AgentManager:
         writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         with self.lock:
             task = read_task(self.tasks_root, task_id)
+            if any(item["kind"] == "commit" and item["state"] == "running" for item in self.runs.values()):
+                raise ValueError("コミット中のタスクがあります")
             if task["status"] == "completed":
                 raise ValueError("完了済みタスクではAgentを実行できません")
             if not self.cli_paths[task["provider"]]:

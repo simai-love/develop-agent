@@ -97,9 +97,12 @@ class WorkflowService:
             target = self.branch_for(parent) if parent else read_project(self.projects_root, task["project_id"])["branch"]
             revisions = (f"{target}...{branch}",)
         elif task["commit_hash"] and task["status"] == "completed":
-            revisions = (f"{task['commit_hash']}^", task["commit_hash"])
+            revisions = (f"{task['commit_hashes'][0]}^", task["commit_hash"])
+        elif task.get("commit_pending") and task["commit_hashes"]:
+            worktree = self.git.ensure(self.branch_for(task_id))
+            revisions = (f"{task['commit_hashes'][0]}^",)
         elif task["commit_hash"] and task["branch"]:
-            revisions = (f"{task['commit_hash']}^", task["commit_hash"])
+            revisions = (f"{task['commit_hashes'][0]}^", task["commit_hash"])
         elif task["status"] == "completed":
             revisions = ()
         else:
@@ -111,7 +114,7 @@ class WorkflowService:
                 worktree = self.git.ensure(branch)
                 revisions = ("HEAD",)
         if worktree:
-            files = self.git.changed(worktree)
+            files = self.git.worktree_diff_files(worktree, revisions[0]) if task.get("commit_pending") and task["commit_hashes"] else self.git.changed(worktree)
         elif revisions:
             files = self.git.diff_files(*revisions)
         else:
@@ -166,6 +169,57 @@ class WorkflowService:
         """Create a pending Git operation and return its record."""
         return self.record_operation(project_id, {"id": uuid4().hex, "kind": kind, "target_id": target_id, "branch": branch, "destination": destination, "state": "started", "git_hash": None, "created_at": now()})
 
+    def begin_agent_commit(self, task_id: str, expected: dict) -> dict:
+        """Record the approved tree for an Agent commit run; return its operation."""
+        with self.lock:
+            preview = self.completion_preview(task_id)
+            if preview["kind"] != "commit" or any(expected.get(key) != preview[key] for key in ("kind", "head", "paths", "report_number", "snapshot")):
+                raise ValueError("確認後にタスクの変更が変わりました。再確認してください")
+            task = read_task(self.tasks_root, task_id)
+            project = read_project(self.projects_root, task["project_id"])
+            if project.get("branch_owners", {}).get(preview["branch"]) != task_id:
+                raise ValueError("このタスクの作業ブランチが予約されていません")
+            operation = self.begin_operation(task["project_id"], "agent_commit", task_id, preview["branch"])
+            operation.update(base_head=preview["head"], expected_tree=preview["snapshot"], expected_paths=preview["paths"])
+            return self.record_operation(task["project_id"], operation)
+
+    def reconcile_agent_commit(self, operation: dict) -> dict:
+        """Record verified Agent commits and finish task ID when its tree matches."""
+        with self.lock:
+            task = read_task(self.tasks_root, operation["target_id"])
+            branch = operation["branch"]
+            path = self.git.ensure(branch)
+            hashes = self.git.commits_since(branch, operation["base_head"])
+            if not hashes:
+                raise ValueError("Agentはコミットを作成しませんでした")
+            for commit in hashes:
+                parents = self.git.git("rev-list", "--parents", "-n", "1", commit).stdout.split()
+                message = self.git.git("log", "-1", "--format=%B", commit).stdout
+                changed = set(self.git.diff_files(f"{commit}^", commit))
+                if len(parents) != 2 or f"Task-Operation: {operation['id']}" not in message or not changed or not changed.issubset(operation["expected_paths"]):
+                    raise ValueError("Agentのコミットに対象外の変更があります。Git履歴を確認してください")
+            for commit in hashes:
+                if commit not in task["commit_hashes"]:
+                    task["commit_hashes"].append(commit)
+            task["commit_hash"] = task["commit_hashes"][-1]
+            task["commit_pending"] = True
+            task["updated_at"] = now()
+            save_metadata(self.tasks_root, task)
+            operation.update(git_hash=hashes[-1], state="partial")
+            self.record_operation(task["project_id"], operation)
+            final_tree = self.git.git("rev-parse", f"{branch}^{{tree}}").stdout.strip()
+            staged = self.git.git("diff", "--cached", "--quiet", cwd=path, check=False).returncode != 0
+            if final_tree != operation["expected_tree"] or not self.git.clean(path) or staged:
+                raise ValueError("一部のコミットだけが作成されました。残りの変更を確認してください")
+            task["commit_pending"] = False
+            save_metadata(self.tasks_root, task)
+            self.release_code(task["id"])
+            operation["state"] = "complete"
+            self.record_operation(task["project_id"], operation)
+            if task["branch"]:
+                return self._merge_reviewed_task(task["id"], self.completion_preview(task["id"]))
+            return mark_task_completed(self.tasks_root, task["id"], task["commit_hash"], "commit")
+
     def recover_operations(self) -> None:
         """Finish metadata updates for Git operations committed before a crash."""
         with self.lock:
@@ -174,6 +228,12 @@ class WorkflowService:
                 for path in sorted(directory.glob("*.json")) if directory.exists() else []:
                     operation = json.loads(path.read_text(encoding="utf-8"))
                     if operation["state"] == "complete":
+                        continue
+                    if operation["kind"] == "agent_commit":
+                        try:
+                            self.reconcile_agent_commit(operation)
+                        except ValueError:
+                            pass
                         continue
                     branch = operation["destination"] or operation["branch"]
                     head = self.git.head(branch)
@@ -190,6 +250,8 @@ class WorkflowService:
                         if task["status"] != "completed":
                             if operation["kind"] == "commit" and task["branch"]:
                                 task["commit_hash"] = head
+                                if head not in task["commit_hashes"]:
+                                    task["commit_hashes"].append(head)
                                 task["updated_at"] = now()
                                 save_metadata(self.tasks_root, task)
                             else:
@@ -328,7 +390,7 @@ class WorkflowService:
             branch = task["branch"]
             parent_branch = self.branch_for(task["parent_id"]) if task["parent_id"] else read_project(self.projects_root, task["project_id"])["branch"]
             return {"kind": "merge", "branch": branch, "target": parent_branch, "head": self.git.head(branch), "target_head": self.git.head(parent_branch), "paths": self.git.diff_paths(parent_branch, branch), "report_number": reports[-1]["number"], "message": f"{task['title']}を統合"}
-        if task["branch"] and task["commit_hash"]:
+        if task["branch"] and task["commit_hash"] and not task.get("commit_pending"):
             parent_branch = self.branch_for(task["parent_id"])
             return {"kind": "merge", "branch": task["branch"], "target": parent_branch, "head": self.git.head(task["branch"]), "target_head": self.git.head(parent_branch), "paths": self.git.diff_paths(parent_branch, task["branch"]), "report_number": reports[-1]["number"], "message": f"{task['title']}を統合"}
         if task["implementation"]["state"] != "succeeded":
@@ -340,7 +402,7 @@ class WorkflowService:
             if project.get("legacy"):
                 return {"kind": "legacy", "branch": branch, "head": self.git.head(branch), "paths": [], "report_number": reports[-1]["number"], "message": "移行前の検証記録として完了"}
             raise ValueError("コミットする変更がありません")
-        return {"kind": "commit", "branch": branch, "head": self.git.head(branch), "paths": paths, "report_number": reports[-1]["number"], "message": task["implementation"].get("commit_message") or f"{task['title']}を実装・検証"}
+        return {"kind": "commit", "branch": branch, "head": self.git.head(branch), "paths": paths, "snapshot": self.git.worktree_tree(self.code_path(task_id)), "report_number": reports[-1]["number"], "message": task["implementation"].get("commit_message") or f"{task['title']}を実装・検証"}
 
     def complete_task(self, task_id: str, expected: dict) -> dict:
         """Commit or merge an approved task and return its completed record."""
@@ -371,6 +433,8 @@ class WorkflowService:
                 task = read_task(self.tasks_root, task_id)
                 if task["branch"]:
                     task["commit_hash"] = commit
+                    if commit not in task["commit_hashes"]:
+                        task["commit_hashes"].append(commit)
                     task["updated_at"] = now()
                     save_metadata(self.tasks_root, task)
                     result = task
