@@ -62,6 +62,9 @@ function renderAgentProgress() {
   if (!busy) return;
   const title = $('#agent-progress-title');
   const description = $('#agent-progress-description');
+  const cancelButton = $('#cancel-run');
+  cancelButton.classList.toggle('hidden', !run || (!run.cancelable && !run.cancel_requested));
+  cancelButton.disabled = Boolean(run?.cancel_requested);
   if (run?.kind === 'commit') {
     title.textContent = 'コミットを作成中';
     description.textContent = 'Agentが変更を意味のある単位に分けてコミットしています。';
@@ -79,8 +82,15 @@ function renderAgentProgress() {
     description.textContent = '作業が終わるとタスクの表示が更新されます。';
   }
   const activity = run?.activity || [];
+  if (run?.cancel_requested) {
+    title.textContent = '中断中';
+    description.textContent = 'Agent と起動した処理の停止を待っています。';
+  } else if (run && !run.cancelable) {
+    title.textContent = '結果を保存中';
+    description.textContent = 'Agent の終了結果を反映しています。';
+  }
   const running = [...activity].reverse().find((item) => item.state === 'running');
-  if (running) description.textContent = `現在実行中: ${running.label}`;
+  if (running && run?.cancelable && !run.cancel_requested) description.textContent = `現在実行中: ${running.label}`;
   const list = $('#agent-progress-activity');
   list.replaceChildren(...activity.slice(-5).reverse().map((item) => {
     const row = document.createElement('li');
@@ -803,7 +813,7 @@ async function pollRun(runId, taskId) {
       state.project = await api(`/api/projects/${state.project.id}`);
       render();
     }
-    toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : `Agentの実行に失敗しました: ${run.message}`);
+    toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : run.state === 'cancelled' ? run.message : `Agentの実行に失敗しました: ${run.message}`);
     break;
   }
 }
@@ -960,6 +970,14 @@ function bindEvents() {
     render();
   });
   $('#focus-chat').addEventListener('click', () => $('#chat-input').focus());
+  $('#cancel-run').addEventListener('click', async () => {
+    const run = state.activeRuns.get(state.task?.id);
+    if (!run || run.cancel_requested) return;
+    try {
+      state.activeRuns.set(run.task_id, await api(`/api/runs/${run.id}/cancel`, { method: 'POST' }));
+      renderAgentProgress();
+    } catch (error) { toast(error.message); }
+  });
   $('#focus-question').addEventListener('click', () => {
     const form = $('#chat-messages .choice-form');
     form?.scrollIntoView({ behavior: 'smooth', block: 'center' });

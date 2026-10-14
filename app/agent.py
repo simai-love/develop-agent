@@ -53,6 +53,7 @@ class AgentManager:
         local_cli = project_root / "app" / "cli" / "node_modules" / ".bin" / "codex"
         self.cli_paths = {"codex": cli_path or (str(local_cli) if local_cli.exists() else shutil.which("codex")), "claude": shutil.which("claude")}
         self.runs: dict[str, dict] = {}
+        self.cancel_events: dict[str, threading.Event] = {}
         self.active_tasks: set[str] = set()
         self.implementation_running = False
         self.lock = threading.RLock()
@@ -142,8 +143,9 @@ class AgentManager:
                 raise ValueError(f"{task['provider']} CLI is not installed")
             operation = self.workflow.begin_agent_commit(task_id, expected)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": "commit", "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": []}
+            run = {"id": run_id, "task_id": task_id, "kind": "commit", "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
+            self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
         threading.Thread(target=self._work_commit, args=(run_id, operation, instruction.strip()), daemon=True).start()
         return dict(run)
@@ -171,19 +173,33 @@ class AgentManager:
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
-            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity))
+            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id])
+            with self.lock:
+                self.runs[run_id]["cancelable"] = False
             if result.returncode:
                 error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
             self.workflow.reconcile_agent_commit(operation)
             outcome = {"state": "succeeded", "message": "コミットを作成し、タスクを完了しました"}
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as failure:
             detail = str(failure)
-            outcome = {"state": "failed", "message": f"{error}: {detail}" if error else detail}
+            cancelled = self.cancel_events[run_id].is_set()
+            outcome = {"state": "cancelled" if cancelled else "failed", "message": "実行を中断しました。作成済みのコミットと残りの変更を確認してください。" if cancelled else f"{error}: {detail}" if error else detail}
         finally:
             output_path.unlink(missing_ok=True)
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
+            self.cancel_events.pop(run_id, None)
+
+    def cancel_run(self, run_id: str) -> dict:
+        """Request cancellation of a running CLI by run ID; return its run record."""
+        with self.lock:
+            run = self.runs.get(run_id)
+            if run is None or run["state"] != "running" or not run["cancelable"]:
+                raise ValueError("実行中のAgentが見つかりません")
+            run["cancel_requested"] = True
+            self.cancel_events[run_id].set()
+            return {**run, "activity": [dict(item) for item in run["activity"]]}
 
     def _commit_prompt(self, task_id: str, operation: dict, instruction: str) -> str:
         """Build a commit-only prompt from task ID and operation; return its text."""
@@ -254,8 +270,9 @@ class AgentManager:
             if writes_code and self.workflow and task["project_id"]:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "activity": []}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
+            self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
             if writes_code:
                 self.implementation_running = True
@@ -311,7 +328,12 @@ class AgentManager:
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
-            result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity))
+            result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id])
+            with self.lock:
+                self.runs[run_id]["cancelable"] = False
+                cancelled = self.cancel_events[run_id].is_set()
+            if cancelled:
+                raise RuntimeError("Agentの実行を中断しました")
             if run["provider"] == "codex":
                 answer = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
             else:
@@ -389,6 +411,7 @@ class AgentManager:
                 append_chat(self.tasks_root, task_id, "result", "system", f"実装と検証を実行し、レポート {report_number} を追加しました。変更ファイル: {', '.join(changed)}\n\n{response['message']}", report_number=report_number)
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
         except (OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+            cancelled = self.cancel_events[run_id].is_set()
             for path, content in previous_reports:
                 if not path.exists() or path.read_text(encoding="utf-8") != content:
                     write_text(path, content)
@@ -400,6 +423,7 @@ class AgentManager:
                 message = (
                     f"実装を停止しました。理由: {error}\n\n01 計画に戻り、Agentに計画書の再生成を依頼してください。"
                     if isinstance(error, PlanChangeNeeded)
+                    else "Agentの実行を中断しました。作業中の変更を確認してください。" if cancelled
                     else f"実装または検証に失敗しました: {error}"
                 )
                 append_chat(self.tasks_root, task_id, "result", "system", message)
@@ -407,13 +431,14 @@ class AgentManager:
                 if phase == "plan" and previous_plan is not None:
                     plan = read_task(self.tasks_root, task_id)["plan"]
                     set_readiness(self.tasks_root, task_id, False, plan, "Agentの計画更新を確認してください", previous_plan)
-                append_chat(self.tasks_root, task_id, phase, "system", f"Agentの実行に失敗しました: {error}")
-            outcome = {"state": "failed", "message": message if isinstance(error, PlanChangeNeeded) else str(error)}
+                append_chat(self.tasks_root, task_id, phase, "system", "Agentの実行を中断しました。" if cancelled else f"Agentの実行に失敗しました: {error}")
+            outcome = {"state": "cancelled" if cancelled else "failed", "message": message if isinstance(error, PlanChangeNeeded) else "Agentの実行を中断しました。作業中の変更を確認してください。" if cancelled else str(error)}
         finally:
             output_path.unlink(missing_ok=True)
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
+            self.cancel_events.pop(run_id, None)
             if writes_code:
                 self.implementation_running = any(item["state"] == "running" and (item["kind"] == "implement" or item["kind"] == "chat" and item["phase"] == "result") for item in self.runs.values())
 
