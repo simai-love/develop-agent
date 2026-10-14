@@ -176,7 +176,7 @@ class AgentManager:
                 error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
             self.workflow.reconcile_agent_commit(operation)
             outcome = {"state": "succeeded", "message": "コミットを作成し、タスクを完了しました"}
-        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as failure:
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as failure:
             detail = str(failure)
             outcome = {"state": "failed", "message": f"{error}: {detail}" if error else detail}
         finally:
@@ -388,7 +388,7 @@ class AgentManager:
                 report_number = task["reports"][-1]["number"]
                 append_chat(self.tasks_root, task_id, "result", "system", f"実装と検証を実行し、レポート {report_number} を追加しました。変更ファイル: {', '.join(changed)}\n\n{response['message']}", report_number=report_number)
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
-        except (OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        except (OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError) as error:
             for path, content in previous_reports:
                 if not path.exists() or path.read_text(encoding="utf-8") != content:
                     write_text(path, content)

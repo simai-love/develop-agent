@@ -35,6 +35,8 @@ flowchart LR
 
 ブラウザの一時状態や Agent の実行中表示と、ファイルに残るタスク状態は別です。進捗のメモリ記録はサーバー再起動後には残りません。 計画・レポート・チャットは画面で Markdown 表示され、資料はタスクごとに保存されます。`app/evidence.py` はアップロードを 100 MB までの許可形式に制限します。Codex のモデル候補は CLI の `model/list` から取得し、新しい Codex タスクの既定値は `gpt-6-sol` です。Claude Code は別途導入した CLI の設定を使います。
 
+Agent CLI の実行時間にはアプリ側の上限を設けません。CLI が終了するまで実行を追跡します。バックグラウンド処理を起動した Agent には、起動した子処理だけを待ち、自身の実行を待機対象にしないよう共通指示を渡します。
+
 ## 3. 代表操作の処理経路
 
 `<id>` は対象の ID です。画面は `app/static/app.js`、API は `app/server.py`、処理順は `app/workflow.py` と `app/agent.py` で確認できます。
