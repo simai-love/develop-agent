@@ -7,6 +7,8 @@ def display_status(task: dict, plan_messages: list[dict], active: bool, children
         return {"key": "completed", "label": "完了済み", "detail": "タスクは完了しています"}
     if active or task["implementation"]["state"] == "running":
         return {"key": "running", "label": "実行中", "detail": "Agentが作業しています"}
+    if task.get("last_run_cancelled"):
+        return {"key": "waiting", "label": "中断", "detail": "変更を確認して再実行"}
     if task.get("commit_pending"):
         return {"key": "waiting", "label": "確認待ち", "detail": "残りの変更を確認してコミット"}
     if children:
