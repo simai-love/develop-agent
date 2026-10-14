@@ -12,7 +12,7 @@ from app.agent_stream import run_streamed
 from app.evidence import list_evidence
 from app.model_catalog import codex_models
 from app.projects import read_project
-from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, task_dir, task_subtree, write_text
+from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent / ".codex" / "skills" / "research-workflow"
@@ -147,6 +147,7 @@ class AgentManager:
             self.runs[run_id] = run
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
+            set_run_cancelled(self.tasks_root, task_id, False)
         threading.Thread(target=self._work_commit, args=(run_id, operation, instruction.strip()), daemon=True).start()
         return dict(run)
 
@@ -186,6 +187,7 @@ class AgentManager:
             outcome = {"state": "cancelled" if cancelled else "failed", "message": "実行を中断しました。作成済みのコミットと残りの変更を確認してください。" if cancelled else f"{error}: {detail}" if error else detail}
         finally:
             output_path.unlink(missing_ok=True)
+        set_run_cancelled(self.tasks_root, task_id, outcome["state"] == "cancelled")
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
@@ -274,6 +276,7 @@ class AgentManager:
             self.runs[run_id] = run
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
+            set_run_cancelled(self.tasks_root, task_id, False)
             if writes_code:
                 self.implementation_running = True
         if kind == "chat":
@@ -435,6 +438,7 @@ class AgentManager:
             outcome = {"state": "cancelled" if cancelled else "failed", "message": message if isinstance(error, PlanChangeNeeded) else "Agentの実行を中断しました。作業中の変更を確認してください。" if cancelled else str(error)}
         finally:
             output_path.unlink(missing_ok=True)
+        set_run_cancelled(self.tasks_root, task_id, outcome["state"] == "cancelled")
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)

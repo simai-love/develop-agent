@@ -50,6 +50,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(manager.get_run(run["id"])["state"], "cancelled")
             self.assertNotIn(task["id"], manager.active_tasks)
             self.assertIn("中断", read_chat(tasks_root, task["id"], "plan")[-1]["content"])
+            self.assertEqual(display_status(read_task(tasks_root, task["id"]), [], False)["label"], "中断")
 
     def test_implementation_instruction_is_added_without_changing_plan(self):
         """Check a one-run instruction enters the prompt and leaves the plan intact."""
@@ -76,6 +77,9 @@ class WorkflowTest(unittest.TestCase):
             update_task(root, task["id"], {"plan": plan})
             ready = set_readiness(root, task["id"], True, plan, "実装可能")
             self.assertEqual(display_status(ready, questions, False)["detail"], "実装を開始")
+            ready["last_run_cancelled"] = True
+            self.assertEqual(display_status(ready, questions, False)["label"], "中断")
+            ready["last_run_cancelled"] = False
             ready["status"] = "verifying"
             self.assertEqual(display_status(ready, questions, False)["detail"], "検証結果を確認")
             ready["status"] = "completed"

@@ -42,6 +42,7 @@ def read_task(root: Path, task_id: str) -> dict:
     directory = task_dir(root, task_id)
     task = json.loads((directory / "task.json").read_text(encoding="utf-8"))
     task.setdefault("implementation", {"state": "not_started", "changed_files": []})
+    task.setdefault("last_run_cancelled", False)
     task.setdefault("readiness", {"ready": False, "plan_hash": None, "reason": "Agentに計画を相談してください"})
     task.setdefault("model", "")
     task.setdefault("provider", "codex")
@@ -330,6 +331,15 @@ def set_implementation(root: Path, task_id: str, state: str, changed_files: list
     previous = task["implementation"]
     task["implementation"] = {"state": state, "changed_files": previous.get("changed_files", []) if changed_files is None else changed_files, "provider": provider or previous.get("provider", task["provider"]), "model": model or previous.get("model", task["model"]), "validation_outcome": validation_outcome, "needs_followup": needs_followup}
     task["status"] = "verifying" if state == "succeeded" else "implementing" if state == "running" else "ready" if task["can_implement"] else "planning"
+    task["updated_at"] = now()
+    save_metadata(root, task)
+    return read_task(root, task_id)
+
+
+def set_run_cancelled(root: Path, task_id: str, cancelled: bool) -> dict:
+    """Store whether the last Agent run was cancelled for task ID; return task."""
+    task = read_task(root, task_id)
+    task["last_run_cancelled"] = cancelled
     task["updated_at"] = now()
     save_metadata(root, task)
     return read_task(root, task_id)
