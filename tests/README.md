@@ -4,7 +4,7 @@
 
 複数のプロジェクト直下タスクについても、APIからの作成と同一ブランチでの順次コミットを確認します。
 
-`test_agent_stream.py` はCLIイベントの変換と実行中の進捗取得を確認します。
+`test_agent_stream.py` はCLIイベントの変換、実行中の進捗取得、実行中断を確認します。
 
 `test_response_schemas.py` はCodexの厳格なJSON応答形式で必要な必須項目を確認します。
 

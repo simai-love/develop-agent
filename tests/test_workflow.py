@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -16,6 +17,39 @@ from app.task_status import display_status
 
 class WorkflowTest(unittest.TestCase):
     """Exercise a planning exchange and its implementation gate."""
+
+    def test_cancelled_plan_run_releases_task(self):
+        """Cancel a live plan CLI and return a reusable task without a report."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".gitignore").write_text("tasks/\nmock-cli\n", encoding="utf-8")
+            subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "初期化"], cwd=root, check=True)
+            tasks_root = root / "tasks"
+            task = create_task(tasks_root, "中断確認")
+            cli = root / "mock-cli"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, sys, time\n"
+                "sys.stdin.read()\n"
+                "print(json.dumps({'type':'item.started','item':{'id':'sleep','type':'command_execution','command':'sleep'}}), flush=True)\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            manager = AgentManager(tasks_root, root, cli_path=str(cli))
+            run = manager.start_chat(task["id"], "plan", "計画してください")
+            deadline = time.monotonic() + 5
+            while not manager.get_run(run["id"])["activity"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(manager.get_run(run["id"])["activity"])
+            self.assertTrue(manager.cancel_run(run["id"])["cancel_requested"])
+            while manager.get_run(run["id"])["state"] == "running" and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertEqual(manager.get_run(run["id"])["state"], "cancelled")
+            self.assertNotIn(task["id"], manager.active_tasks)
+            self.assertIn("中断", read_chat(tasks_root, task["id"], "plan")[-1]["content"])
 
     def test_implementation_instruction_is_added_without_changing_plan(self):
         """Check a one-run instruction enters the prompt and leaves the plan intact."""

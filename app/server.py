@@ -144,6 +144,13 @@ class Handler(BaseHTTPRequestHandler):
         """Create a task or Agent run from JSON and return its record."""
         parsed = urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/runs/") and path.endswith("/cancel"):
+            try:
+                run_id = path.removeprefix("/api/runs/").removesuffix("/cancel")
+                self.send_json(202, AGENT.cancel_run(run_id))
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path == "/api/projects" or path.startswith("/api/projects/") or path.startswith("/api/tasks/") and (path.endswith("/children") or path.endswith("/summary") or path.endswith("/parallel-execute") or "/proposals/" in path):
             try:
                 body = self.read_json()

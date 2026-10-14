@@ -52,6 +52,30 @@ class AgentStreamTests(unittest.TestCase):
         self.assertEqual(tool_activity(assistant, "claude"), [{"id": "tool-1", "label": "git status --short", "state": "running"}])
         self.assertEqual(tool_activity(result, "claude"), [{"id": "tool-1", "label": "", "state": "done"}])
 
+    def test_cancellation_stops_running_cli(self):
+        """Cancel a CLI that has started and return without waiting for its sleep."""
+        script = "import json, sys, time\nsys.stdin.read()\nprint(json.dumps({'type':'item.started','item':{'id':'sleep','type':'command_execution','command':'sleep'}}), flush=True)\ntime.sleep(30)\n"
+        cancel = threading.Event()
+        started = threading.Event()
+        results = []
+
+        def collect(activity: dict) -> None:
+            """Accept an activity update and return nothing."""
+            started.set()
+
+        def run_mock(cwd: Path) -> None:
+            """Run a sleeping CLI in cwd and store its result; return nothing."""
+            results.append(run_streamed([sys.executable, "-u", "-c", script], "prompt", cwd, "codex", collect, cancel))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            thread = threading.Thread(target=run_mock, args=(Path(temporary),))
+            thread.start()
+            self.assertTrue(started.wait(2))
+            cancel.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertNotEqual(results[0].returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

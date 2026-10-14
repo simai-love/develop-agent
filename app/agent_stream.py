@@ -1,8 +1,11 @@
 """Stream Agent CLI events and extract visible tool activity."""
 
 import json
+import os
+import signal
 import subprocess
 import tempfile
+import threading
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
@@ -43,22 +46,44 @@ def _claude_tool_label(block: dict) -> str:
     return str(detail) if name == "Bash" and detail else f"{name}: {detail}" if detail else name
 
 
-def run_streamed(command: list[str], prompt: str, cwd: str | Path, provider: str, on_activity: Callable[[dict], None]) -> subprocess.CompletedProcess:
+def run_streamed(command: list[str], prompt: str, cwd: str | Path, provider: str, on_activity: Callable[[dict], None], cancel_event: threading.Event | None = None) -> subprocess.CompletedProcess:
     """Run a CLI with prompt in cwd, report tool events, and return its result."""
     output = deque(maxlen=200)
+    finished = threading.Event()
     with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stderr_file:
-        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_file, text=True, cwd=cwd, bufsize=1) as process:
-            process.stdin.write(prompt)
-            process.stdin.close()
-            for line in process.stdout:
-                output.append(line[-200_000:])
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                for activity in tool_activity(event, provider):
-                    on_activity(activity)
-            process.wait()
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_file, text=True, cwd=cwd, bufsize=1, start_new_session=True) as process:
+            if cancel_event is not None:
+                def stop_when_cancelled() -> None:
+                    """Stop the CLI process group when cancellation is requested; return nothing."""
+                    while not finished.wait(0.1):
+                        if not cancel_event.is_set():
+                            continue
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            return
+                        if not finished.wait(2):
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        return
+
+                threading.Thread(target=stop_when_cancelled, daemon=True).start()
+            try:
+                process.stdin.write(prompt)
+                process.stdin.close()
+                for line in process.stdout:
+                    output.append(line[-200_000:])
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    for activity in tool_activity(event, provider):
+                        on_activity(activity)
+                process.wait()
+            finally:
+                finished.set()
         stderr_file.seek(0)
         stderr = stderr_file.read()
     return subprocess.CompletedProcess(command, process.returncode, "".join(output), stderr)

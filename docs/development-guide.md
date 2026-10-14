@@ -52,6 +52,7 @@ Agent CLI の実行時間にはアプリ側の上限を設けません。CLI が
 | 実装と初回検証 | 確認後の実装ボタン → `POST /api/tasks/<id>/execute` | `AgentManager.start_implementation`・`_work` | 任意の `additional_instruction` はその回のプロンプトだけに追加する。worktree のコード、`report-draft.md` から `reports/0001.md` などへ保存、`task.json`・`chat_result.json`。この時点でコミットしない | 実行 ID と後続のレポート |
 | 子タスクの並列実装 | 親の計画画面 → `POST /api/tasks/<id>/parallel-execute` | `AgentManager.start_parallel_children`・`WorkflowService.prepare_parallel_children` | 選択した計画済みの葉に個別ブランチと worktree を作成し、任意の共通 `additional_instruction` をその回だけに渡して独立した Agent 実行を開始。親には未承認変更を入れない | 実行 ID の配列 |
 | 実行確認 | 画面の更新 → `GET /api/runs/<id>`、`GET /api/tasks/<id>` | `AgentManager.get_run`・`Handler.present_task` | 読み取りのみ。実行履歴はメモリ内 | 進捗、完了結果、表示状態 |
+| 実行中断 | 実行中表示 → `POST /api/runs/<id>/cancel` | `AgentManager.cancel_run`・`app/agent_stream.py` | 対象 CLI と同じプロセスグループを停止。作業中の変更と作成済みコミットは残し、未完成レポートを確定しない | 対象の実行 ID が中断状態になる |
 | 02 追加検証・修正 | 02 チャット → `POST /api/tasks/<id>/chat` (`phase: result`) | `AgentManager.start_chat`・`_work` | 必要なら worktree のコード、結果が得られれば次の番号の `reports/`、`chat_result.json`・`task.json` | 実行 ID と新しい結果。結果がなければレポートは増やさない |
 | 変更ファイルの差分確認 | タスク画面 → `GET /api/tasks/<id>/diff`、`?path=<ファイル>` | `WorkflowService.task_diff` | 読み取りのみ | 作業中の未コミット差分、完了後のコミット・マージ差分 |
 | 資料追加 | 02 の資料選択 → `POST /api/tasks/<id>/evidence?name=...` | `app/evidence.py` の `save_evidence` | `tasks/<id>/evidence/` | 資料の情報と表示 |
