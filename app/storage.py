@@ -48,6 +48,8 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("project_id", None)
     task.setdefault("branch", None)
     task.setdefault("commit_hash", None)
+    task.setdefault("commit_hashes", [task["commit_hash"]] if task["commit_hash"] else [])
+    task.setdefault("commit_pending", False)
     task.setdefault("pre_split_commit", None)
     task.setdefault("merge_hash", None)
     task.setdefault("legacy_completed", False)
@@ -142,6 +144,8 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
         "project_id": project_id,
         "branch": None,
         "commit_hash": None,
+        "commit_hashes": [],
+        "commit_pending": False,
         "pre_split_commit": None,
         "merge_hash": None,
         "legacy_completed": False,
@@ -253,6 +257,8 @@ def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: st
         task["legacy_completed"] = True
     else:
         task["commit_hash" if kind == "commit" else "merge_hash"] = git_hash
+        if kind == "commit" and git_hash and git_hash not in task["commit_hashes"]:
+            task["commit_hashes"].append(git_hash)
     save_metadata(root, task)
     return read_task(root, task_id)
 

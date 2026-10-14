@@ -220,7 +220,10 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/complete")
                 if task_id in AGENT.active_tasks:
                     raise ValueError("Cannot complete a task during an Agent run")
-                self.send_json(200, self.present_task(WORKFLOW.complete_task(task_id, body)))
+                if body.get("kind") == "commit":
+                    self.send_json(202, AGENT.start_commit(task_id, body, body.get("commit_instruction", "")))
+                else:
+                    self.send_json(200, self.present_task(WORKFLOW.complete_task(task_id, body)))
             else:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/execute")
                 self.send_json(202, AGENT.start_implementation(task_id, body.get("additional_instruction", "")))

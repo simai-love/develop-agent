@@ -62,7 +62,10 @@ function renderAgentProgress() {
   if (!busy) return;
   const title = $('#agent-progress-title');
   const description = $('#agent-progress-description');
-  if (run?.kind === 'chat' && run.phase === 'plan') {
+  if (run?.kind === 'commit') {
+    title.textContent = 'コミットを作成中';
+    description.textContent = 'Agentが変更を意味のある単位に分けてコミットしています。';
+  } else if (run?.kind === 'chat' && run.phase === 'plan') {
     title.textContent = '計画を作成中';
     description.textContent = 'Agentが要件と仮説を整理しています。完了すると計画が更新されます。';
   } else if (run?.phase === 'result') {
@@ -434,6 +437,9 @@ function render() {
     : '検証のたびに増えるレポートを開いて、結論と根拠を確認できます。';
   $('#file-path').textContent = `tasks/${task.id}/plan.md`;
   $('#task-path').textContent = `tasks/${task.id}/`;
+  $('#commit-history').textContent = task.commit_hashes?.length
+    ? `このタスクのコミット: ${task.commit_hashes.map((hash) => hash.slice(0, 10)).join('、')}`
+    : '';
   $('#markdown-editor').value = state.drafts.plan;
   $('#markdown-editor').placeholder = '# 開発計画\n\n## 目的\nしてほしいことを一文で書く。\n\n## 現状と困っていること\n- 一つ目\n- 二つ目\n- 三つ目\n';
   $('#plan-preview').replaceChildren(renderMarkdown(state.drafts.plan, task.id));
@@ -472,7 +478,7 @@ function render() {
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
   $('#complete-button').disabled = migrationPending || task.status === 'completed' || busy || (task.child_count ? !childrenDone || !summaryReady : task.implementation?.state !== 'succeeded' || !task.result.trim());
-  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.child_count ? '親ブランチへ統合 →' : 'タスクを完了 →';
+  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.commit_pending && !task.child_count ? '親ブランチへ統合 →' : 'タスクを完了 →';
   $('#complete-button').title = task.implementation?.state !== 'succeeded' ? 'CLIによる実装が確認されてから完了できます' : '';
   $('#result-actions p').textContent = task.implementation?.validation_outcome
     ? `Agentの検証結果：${outcomeLabels[task.implementation.validation_outcome]}。結果を確認し、目的を達成したと判断したら完了にしてください。`
@@ -1130,9 +1136,9 @@ function bindEvents() {
           item.textContent = path;
           return item;
         }));
-        $('#commit-message').value = preview.message;
+        $('#commit-instruction').value = '';
         $('#commit-dialog').showModal();
-        $('#commit-message').focus();
+        $('#commit-instruction').focus();
         return;
       }
       const details = preview.kind === 'legacy' ? '移行前の検証記録として完了します。新しいコミットは作りません。' : `マージ: ${preview.branch} → ${preview.target}\n対象: ${preview.paths.join(', ')}`;
@@ -1155,18 +1161,15 @@ function bindEvents() {
   $('#commit-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!pendingCommit || $('#confirm-commit').disabled) return;
-    const message = $('#commit-message').value.trim();
-    if (!message) { toast('コミットメッセージを入力してください'); $('#commit-message').focus(); return; }
     const { taskId, preview } = pendingCommit;
     $('#confirm-commit').disabled = true;
     try {
-      state.task = await api(`/api/tasks/${taskId}/complete`, {
-        method: 'POST', body: JSON.stringify({ ...preview, message }),
+      const run = await api(`/api/tasks/${taskId}/complete`, {
+        method: 'POST', body: JSON.stringify({ ...preview, commit_instruction: $('#commit-instruction').value }),
       });
       $('#commit-dialog').close();
-      await refreshTasks();
-      render();
-      toast('タスクを完了しました');
+      state.task = await api(`/api/tasks/${taskId}`);
+      watchRun(run);
     } catch (error) {
       state.task = await api(`/api/tasks/${taskId}`);
       if (state.task.commit_hash) $('#commit-dialog').close();
