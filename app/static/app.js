@@ -3,10 +3,9 @@ import { renderMarkdown } from './markdown.mjs';
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
 const chatHeightStorageKey = 'develop-agent.chat-height';
-const projectCollapseStoragePrefix = 'develop-agent.project-collapsed.';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
-const state = { projects: [], project: null, tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, createProjectId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
+const state = { tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
 let parallelSelection = { parentId: null, ids: new Set() };
@@ -19,7 +18,7 @@ function renderParallelChildren() {
   if (panel.classList.contains('hidden')) return;
   if (parallelSelection.parentId !== parent.id) parallelSelection = { parentId: parent.id, ids: new Set() };
   const children = state.tasks.filter((item) => item.parent_id === parent.id);
-  const available = children.filter((item) => item.can_implement && !item.branch && item.implementation?.state === 'not_started' && item.status !== 'completed' && !isTaskBusy(item));
+  const available = children.filter((item) => item.can_implement && item.implementation?.state === 'not_started' && item.status !== 'completed' && !isTaskBusy(item));
   const list = $('#parallel-children');
   list.replaceChildren(...children.map((item) => {
     const label = document.createElement('label');
@@ -208,10 +207,10 @@ function renderTree() {
   /** Read task metadata and render the hierarchy; return nothing. */
   const tree = $('#task-tree');
   tree.replaceChildren();
-  if (!state.projects.length) {
+  if (!state.tasks.length) {
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'プロジェクトはまだありません。＋から作成できます。';
+    empty.textContent = 'タスクはまだありません。＋から作成できます。';
     tree.append(empty);
     return;
   }
@@ -266,86 +265,7 @@ function renderTree() {
     container.append(item);
     for (const child of children.get(task.id) || []) appendTask(child, depth + 1, container);
   };
-  for (const project of state.projects) {
-    const item = document.createElement('div');
-    item.className = 'tree-item project-item';
-    const storageKey = `${projectCollapseStoragePrefix}${project.id}`;
-    const collapsed = window.localStorage.getItem(storageKey) === 'true';
-    const tasks = document.createElement('div');
-    tasks.id = `project-tasks-${project.id}`;
-    tasks.className = 'project-tasks';
-    tasks.hidden = collapsed;
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'tree-action project-toggle';
-    toggle.textContent = collapsed ? '▸' : '▾';
-    toggle.title = `プロジェクト「${project.name}」のタスクを${collapsed ? '開く' : '閉じる'}`;
-    toggle.setAttribute('aria-label', toggle.title);
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.setAttribute('aria-controls', tasks.id);
-    toggle.addEventListener('click', () => {
-      window.localStorage.setItem(storageKey, String(!collapsed));
-      renderTree();
-    });
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = `tree-row project-row${state.project?.id === project.id ? ' selected' : ''}`;
-    const projectName = document.createElement('span');
-    projectName.className = 'tree-text';
-    projectName.textContent = `▣ ${project.name}`;
-    const summary = document.createElement('span');
-    summary.className = 'tree-summary';
-    const meta = document.createElement('span');
-    meta.className = 'tree-meta';
-    const progress = document.createElement('span');
-    progress.className = 'tree-status-detail';
-    progress.textContent = `${project.completed_count}/${project.task_count} タスク`;
-    meta.append(progress);
-    if (project.status === 'completed') {
-      const completed = document.createElement('span');
-      completed.className = 'tree-status completed';
-      completed.textContent = '完了済み';
-      meta.append(completed);
-    } else if (state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task))) {
-      const running = document.createElement('span');
-      running.className = 'tree-status running';
-      running.textContent = '実行中';
-      meta.append(running);
-    }
-    summary.append(projectName, meta);
-    row.append(summary);
-    row.title = project.branch;
-    row.addEventListener('click', () => selectProject(project.id));
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'tree-action';
-    add.textContent = '＋';
-    add.title = `プロジェクト「${project.name}」にタスクを追加`;
-    add.setAttribute('aria-label', add.title);
-    add.disabled = project.status === 'completed' || project.needs_review || state.tasks.some(isTaskBusy);
-    add.addEventListener('click', () => openCreate(null, project.id));
-    const rename = document.createElement('button');
-    rename.type = 'button';
-    rename.className = 'tree-action';
-    rename.textContent = '✎';
-    rename.title = `プロジェクト「${project.name}」の名前を変更`;
-    rename.setAttribute('aria-label', rename.title);
-    rename.addEventListener('click', () => openRename('project', project.id));
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'tree-action delete';
-    remove.textContent = '×';
-    remove.title = `プロジェクト「${project.name}」を削除`;
-    remove.setAttribute('aria-label', remove.title);
-    remove.disabled = state.tasks.some((task) => task.project_id === project.id && isTaskBusy(task));
-    remove.addEventListener('click', () => deleteProject(project.id));
-    item.append(toggle, row, add, rename, remove);
-    tree.append(item, tasks);
-    for (const task of children.get('root') || []) {
-      if (task.project_id !== project.id) continue;
-      appendTask(task, 1, tasks);
-    }
-  }
+  for (const task of children.get('root') || []) appendTask(task, 0, tree);
 }
 
 function subtreeIds(taskId) {
@@ -407,32 +327,17 @@ async function loadTaskDiff() {
 function render() {
   /** Read the selected task and tab, then render the GUI; return nothing. */
   const task = state.task;
-  $('#empty-view').classList.toggle('hidden', Boolean(task || state.project));
+  $('#empty-view').classList.toggle('hidden', Boolean(task));
   $('#task-view').classList.toggle('hidden', !task);
-  $('#project-view').classList.toggle('hidden', !state.project);
   renderTree();
-  if (state.project) {
-    const project = state.project;
-    $('#breadcrumb').textContent = project.name;
-    $('#project-title').textContent = project.name;
-    $('#project-branch').textContent = `ブランチ: ${project.branch}`;
-    $('#project-status').textContent = project.status === 'completed' ? '完了済み' : '進行中';
-    $('#project-progress').textContent = `${project.completed_count} / ${project.task_count} タスク完了。全タスク完了後に dev へマージできます。`;
-    $('#migration-action').classList.toggle('hidden', !project.needs_review);
-    $('#legacy-branch-action').classList.toggle('hidden', !project.legacy || project.status === 'completed');
-    if (document.activeElement !== $('#legacy-branch-slug')) $('#legacy-branch-slug').value = project.slug;
-    $('#add-project-task').disabled = project.needs_review || project.status === 'completed' || state.tasks.some(isTaskBusy);
-    $('#complete-project').disabled = project.needs_review || project.status === 'completed' || project.completed_count !== project.task_count || !project.task_count;
-    return;
-  }
   if (!task) { $('#breadcrumb').textContent = '概要'; return; }
   const isPlan = state.tab === 'plan';
   const parent = state.tasks.find((item) => item.id === task.parent_id);
-  const migrationPending = Boolean(state.projects.find((project) => project.id === task.project_id)?.needs_review);
+  const migrationPending = Boolean(task.migration_pending);
   $('#breadcrumb').textContent = task.title;
   $('#task-title').textContent = task.title;
   $('#task-number').textContent = `/ ${task.id.slice(0, 6).toUpperCase()}`;
-  $('#task-parent').textContent = parent ? `親タスク / ${parent.title}` : `プロジェクト / ${state.projects.find((project) => project.id === task.project_id)?.name || ''}`;
+  $('#task-parent').textContent = parent ? `親タスク / ${parent.title}` : task.status === 'completed' ? 'devへ統合済み' : `作業ブランチ / ${task.branch}`;
   const status = taskStatus(task);
   $('#status-label').textContent = `${status.label} · ${status.detail}`;
   $('#status-label').className = `status-pill ${status.key}`;
@@ -478,17 +383,17 @@ function render() {
   const busy = isTaskBusy(task);
   renderAgentProgress();
   $('#rename-task').disabled = busy;
-  $('#add-child').disabled = migrationPending || busy;
+  $('#add-child').disabled = migrationPending || busy || task.status === 'completed';
   $('#delete-task').disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
   $('#plan-empty').classList.toggle('hidden', !isPlan || Boolean(task.plan.trim()) || Boolean(state.drafts.plan.trim()));
   $('#execute-button').disabled = migrationPending || Boolean(task.child_count) || !task.can_implement || state.drafts.plan !== task.plan || !agentAvailable() || !modelSelected() || busy || task.status === 'completed' || task.implementation?.state === 'running';
   $('#execute-button').title = task.readiness?.reason || 'Agentの実装可否判定を待っています';
-  $('#readiness-reason').textContent = migrationPending ? 'プロジェクト画面で移行前のGit変更を確認してください。' : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
+  $('#readiness-reason').textContent = migrationPending ? '移行前のGit変更を確認してください。' : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
   const childrenDone = state.tasks.filter((item) => item.parent_id === task.id).every((item) => item.status === 'completed');
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
   $('#complete-button').disabled = migrationPending || task.status === 'completed' || busy || (task.child_count ? !childrenDone || !summaryReady : task.implementation?.state !== 'succeeded' || !task.result.trim());
-  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.commit_pending && !task.child_count ? '親ブランチへ統合 →' : 'タスクを完了 →';
+  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.commit_pending && !task.child_count ? `${task.parent_id ? '親ブランチ' : 'dev'}へ統合 →` : 'タスクを完了 →';
   $('#complete-button').title = task.implementation?.state !== 'succeeded' ? 'CLIによる実装が確認されてから完了できます' : '';
   $('#result-actions p').textContent = task.implementation?.validation_outcome
     ? `Agentの検証結果：${outcomeLabels[task.implementation.validation_outcome]}。結果を確認し、目的を達成したと判断したら完了にしてください。`
@@ -535,7 +440,7 @@ function renderProposals() {
     const approve = document.createElement('button');
     approve.className = 'secondary-button';
     approve.textContent = '承認して子タスクを作成';
-    approve.disabled = Boolean(item.stale || state.projects.find((project) => project.id === state.task.project_id)?.needs_review);
+    approve.disabled = Boolean(item.stale || state.task.migration_pending);
     approve.addEventListener('click', async () => {
       try {
         const child = await api(`/api/tasks/${state.task.id}/proposals/${item.id}/approve`, { method: 'POST', body: JSON.stringify({ title: title.value.trim(), purpose: fields.purpose.value.trim(), scope: fields.scope.value.trim(), verification: fields.verification.value.trim() }) });
@@ -637,6 +542,8 @@ function renderEvidence() {
       const image = document.createElement('img');
       image.src = url;
       image.alt = entry.name;
+      image.loading = 'lazy';
+      image.decoding = 'async';
       link.append(image);
       card.append(link);
     } else if (entry.kind === 'video') {
@@ -809,9 +716,6 @@ async function pollRun(runId, taskId) {
       await loadChat();
       await loadEvidence();
       render();
-    } else if (state.project) {
-      state.project = await api(`/api/projects/${state.project.id}`);
-      render();
     }
     toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : run.state === 'cancelled' ? run.message : `Agentの実行に失敗しました: ${run.message}`);
     break;
@@ -844,23 +748,14 @@ async function refreshUntrackedRun() {
 
 async function refreshTasks() {
   /** Fetch task metadata and update the navigation tree; return nothing. */
-  [state.projects, state.tasks] = await Promise.all([api('/api/projects'), api('/api/tasks')]);
+  state.tasks = await api('/api/tasks');
   renderTree();
-}
-
-async function selectProject(id) {
-  /** Load project id, show its overview, and return nothing. */
-  if (hasChanges() && !window.confirm('未保存の変更を破棄して移動しますか？')) return;
-  state.project = await api(`/api/projects/${id}`);
-  state.task = null;
-  render();
 }
 
 async function selectTask(id) {
   /** Load task ID after checking unsaved edits; return nothing. */
   if (hasChanges() && !window.confirm('未保存の変更を破棄して移動しますか？')) return;
   state.task = await api(`/api/tasks/${id}`);
-  state.project = null;
   state.drafts = { plan: state.task.plan, result: state.task.result };
   state.tab = 'plan';
   state.planEditing = false;
@@ -895,55 +790,29 @@ async function savePendingDrafts() {
   render();
 }
 
-function openCreate(parentId = null, projectId = null) {
-  /** Open the creation form for a parent task or project ID; return nothing. */
+function openCreate(parentId = null) {
+  /** Open the creation form for a root or child task; return nothing. */
   state.parentId = parentId;
-  state.createProjectId = projectId;
-  $('#dialog-title').textContent = parentId ? '子タスクを作成' : projectId ? 'タスクを作成' : 'プロジェクトを作成';
+  $('#dialog-title').textContent = parentId ? '子タスクを作成' : 'タスクを作成';
   $('#dialog-description').textContent = parentId
     ? `「${state.tasks.find((task) => task.id === parentId)?.title || '親タスク'}」の子タスクを作成します。`
-    : projectId ? `「${state.projects.find((project) => project.id === projectId)?.name || 'プロジェクト'}」の直下にタスクを作成します。`
-      : 'プロジェクト名、ブランチ名、最初のタスクを指定してください。';
-  $('#new-title-label').textContent = parentId ? '子タスク名' : projectId ? 'タスク名' : 'プロジェクト名';
-  $('#project-create-fields').classList.toggle('hidden', Boolean(parentId || projectId));
-  $('#new-slug').required = !parentId && !projectId;
-  $('#first-task-title').required = false;
+    : 'タスク名を入力してください。専用ブランチを作成します。';
+  $('#new-title-label').textContent = parentId ? '子タスク名' : 'タスク名';
   $('#new-title').value = '';
-  $('#new-slug').value = '';
-  $('#first-task-title').value = '';
   $('#create-dialog').showModal();
   $('#new-title').focus();
 }
 
-function openRename(kind, id) {
-  /** Fill the rename dialog for a project or task ID and return nothing. */
-  const item = kind === 'project' ? state.projects.find((project) => project.id === id) : state.tasks.find((task) => task.id === id);
-  if (!item || (kind === 'task' && isTaskBusy(item))) return;
-  state.renameTarget = { kind, id, name: kind === 'project' ? item.name : item.title };
-  $('#rename-dialog-title').textContent = kind === 'project' ? 'プロジェクト名を変更' : '開発項目の名前を変更';
+function openRename(id) {
+  /** Fill the rename dialog for task ID and return nothing. */
+  const item = state.tasks.find((task) => task.id === id);
+  if (!item || isTaskBusy(item)) return;
+  state.renameTarget = { id, name: item.title };
+  $('#rename-dialog-title').textContent = 'タスク名を変更';
   $('#rename-title').value = state.renameTarget.name;
   $('#rename-dialog').showModal();
   $('#rename-title').focus();
   $('#rename-title').select();
-}
-
-async function deleteProject(projectId) {
-  /** Confirm and delete projectId, then refresh the visible workspace. */
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project || !window.confirm(`プロジェクト「${project.name}」と全タスクの記録・作業ブランチを削除しますか？`)) return;
-  try {
-    await api(`/api/projects/${projectId}`, { method: 'DELETE' });
-    if (state.project?.id === projectId) state.project = null;
-    if (state.task?.project_id === projectId) {
-      state.task = null;
-      state.messages = [];
-      state.evidence = [];
-      state.drafts = { plan: '', result: '' };
-    }
-    await refreshTasks();
-    render();
-    toast('プロジェクトを削除しました');
-  } catch (error) { toast(error.message); }
 }
 
 function openDelete(taskId = state.task?.id) {
@@ -961,11 +830,9 @@ function bindEvents() {
   let pendingCommit = null;
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
-  $('#add-project-task').addEventListener('click', () => openCreate(null, state.project.id));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
     state.task = null;
-    state.project = null;
     state.messages = [];
     render();
   });
@@ -984,7 +851,7 @@ function bindEvents() {
     form?.querySelector('input[type="radio"]')?.focus({ preventScroll: true });
   });
   $('#add-child').addEventListener('click', () => openCreate(state.task.id));
-  $('#rename-task').addEventListener('click', () => openRename('task', state.task?.id));
+  $('#rename-task').addEventListener('click', () => openRename(state.task?.id));
   $('#cancel-rename').addEventListener('click', () => { state.renameTarget = null; $('#rename-dialog').close(); });
   $('#rename-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -994,18 +861,13 @@ function bindEvents() {
     if (!title) { toast('名前を入力してください'); return; }
     if (title === target.name) { state.renameTarget = null; $('#rename-dialog').close(); return; }
     try {
-      if (target.kind === 'project') {
-        const project = await api(`/api/projects/${target.id}`, { method: 'PATCH', body: JSON.stringify({ name: title }) });
-        if (state.project?.id === target.id) state.project = project;
-      } else {
-        const task = await api(`/api/tasks/${target.id}`, { method: 'PATCH', body: JSON.stringify({ title }) });
-        if (state.task?.id === target.id) state.task = task;
-      }
+      const task = await api(`/api/tasks/${target.id}`, { method: 'PATCH', body: JSON.stringify({ title }) });
+      if (state.task?.id === target.id) state.task = task;
       $('#rename-dialog').close();
       state.renameTarget = null;
       await refreshTasks();
       render();
-      toast(target.kind === 'project' ? 'プロジェクト名を変更しました' : '開発項目の名前を変更しました');
+      toast('タスク名を変更しました');
     } catch (error) { toast(error.message); }
   });
   $('#delete-task').addEventListener('click', () => openDelete());
@@ -1038,18 +900,15 @@ function bindEvents() {
       let task;
       if (state.parentId) {
         task = await api(`/api/tasks/${state.parentId}/children`, { method: 'POST', body: JSON.stringify({ title: $('#new-title').value }) });
-      } else if (state.createProjectId) {
-        task = await api(`/api/projects/${state.createProjectId}/tasks`, { method: 'POST', body: JSON.stringify({ title: $('#new-title').value }) });
       } else {
-        const project = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: $('#new-title').value, slug: $('#new-slug').value, first_task_title: $('#first-task-title').value || $('#new-title').value }) });
-        task = await api(`/api/tasks/${project.first_task_id}`);
+        task = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ title: $('#new-title').value }) });
       }
       $('#create-dialog').close();
       state.task = null;
       state.drafts = { plan: '', result: '' };
       await refreshTasks();
       await selectTask(task.id);
-      toast(state.parentId ? '子タスクを作成しました' : state.createProjectId ? 'タスクを作成しました' : 'プロジェクトを作成しました');
+      toast(state.parentId ? '子タスクを作成しました' : 'タスクを作成しました');
     } catch (error) { toast(error.message); }
   });
   $('#tab-plan').addEventListener('click', () => { state.tab = 'plan'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });
@@ -1211,33 +1070,6 @@ function bindEvents() {
       watchRun(run);
     } catch (error) { toast(error.message); }
   });
-  $('#complete-project').addEventListener('click', async () => {
-    try {
-      const preview = await api(`/api/projects/${state.project.id}/completion-preview`);
-      if (!window.confirm(`全タスクの結果を確認し、${preview.branch} を dev にマージしますか？\n対象: ${preview.paths.join(', ')}`)) return;
-      state.project = await api(`/api/projects/${state.project.id}/complete`, { method: 'POST', body: JSON.stringify(preview) });
-      await refreshTasks();
-      render();
-      toast(preview.paths.length ? 'プロジェクトを dev にマージしました' : 'プロジェクトを完了しました');
-    } catch (error) { toast(error.message); }
-  });
-  $('#acknowledge-migration').addEventListener('click', async () => {
-    try {
-      state.project = await api(`/api/projects/${state.project.id}/acknowledge-migration`, { method: 'POST', body: '{}' });
-      await refreshTasks();
-      render();
-      toast('移行先を更新しました');
-    } catch (error) { toast(error.message); }
-  });
-  $('#save-legacy-branch').addEventListener('click', async () => {
-    try {
-      state.project = await api(`/api/projects/${state.project.id}`, { method: 'PATCH', body: JSON.stringify({ slug: $('#legacy-branch-slug').value.trim() }) });
-      await refreshTasks();
-      render();
-      toast('ブランチ名を更新しました');
-    } catch (error) { toast(error.message); }
-  });
-  $('#delete-project').addEventListener('click', () => deleteProject(state.project.id));
   $('#details-toggle').addEventListener('click', () => {
     const content = $('#details-content');
     content.classList.toggle('hidden');

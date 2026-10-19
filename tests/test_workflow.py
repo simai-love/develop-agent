@@ -64,6 +64,21 @@ class WorkflowTest(unittest.TestCase):
             self.assertNotIn("今回の実行への追加指示", manager._implementation_prompt(task["id"]))
             self.assertEqual(read_task(root, task["id"])["plan"], "# 計画\n実装する")
 
+    def test_result_prompt_keeps_large_evidence_out_of_initial_context(self):
+        """Bound a result chat prompt while leaving full evidence on disk."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            task = create_task(root, "画像確認")
+            (root / task["id"] / "result.md").write_text("結果\n" + "説明" * 10000, encoding="utf-8")
+            evidence = root / task["id"] / "evidence"
+            for index in range(80):
+                (evidence / f"image-{index:03}.png").write_bytes(b"x")
+            prompt = AgentManager(root, root)._chat_prompt(task["id"], "result")
+            self.assertIn("検証資料: 全80件、最近の20件", prompt)
+            self.assertNotIn("image-000.png", prompt)
+            self.assertIn("image-079.png", prompt)
+            self.assertLess(len(prompt), 12000)
+
     def test_display_status_shows_next_action_and_active_runs(self):
         """Check task and chat inputs produce the user's visible next step."""
         with tempfile.TemporaryDirectory() as temporary:

@@ -116,16 +116,6 @@ button:disabled {
   align-items:center;
   min-width:0
 }
-.project-tasks {
-  display:contents
-}
-.project-tasks[hidden] {
-  display:none
-}
-.project-toggle {
-  color:#a9dea9;
-  font-size:17px
-}
 .tree-row {
   display:flex;
   align-items:center;
@@ -699,6 +689,7 @@ button:disabled {
 .rendered-markdown strong { color:#f0f7ef; font-weight:700 }
 .rendered-markdown a { color:#a9ddae }
 .rendered-markdown img { display:block; max-width:min(100%,600px); max-height:420px; object-fit:contain; margin:8px 0; border-radius:5px }
+.rendered-markdown .math-block { max-width:100%; overflow-x:auto; margin:12px 0 }
 .rendered-markdown pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#141a15; padding:12px; border-radius:5px }
 .rendered-markdown code { background:#26322a; padding:2px 4px; border-radius:3px }
 .rendered-markdown pre code { background:none; padding:0 }
@@ -1219,13 +1210,6 @@ dialog input:focus,dialog textarea:focus {
     max-width:56%
   }
 }
-.project-row {
-  width: 100%;
-  font-weight: 700;
-}
-.project-row .tree-meta { font-weight: 400 }
-.project-item { margin-top:10px }
-
 .proposal-card {
   display: grid;
   gap: 10px;

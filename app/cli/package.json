@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "dependencies": {
-    "@openai/codex": "0.162.1"
+    "@openai/codex": "0.162.1",
+    "katex": "^0.16.47"
   }
 }

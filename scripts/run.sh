@@ -9,7 +9,7 @@ if [[ ! -d .venv ]]; then
 fi
 source .venv/bin/activate
 uv sync --frozen --active
-if [[ ! -x app/cli/node_modules/.bin/codex ]]; then
+if [[ ! -x app/cli/node_modules/.bin/codex || ! -f app/cli/node_modules/katex/dist/katex.min.js ]]; then
   npm ci --prefix app/cli
 fi
 python -m app.server

@@ -13,8 +13,8 @@ function safeHref(value, taskId) {
 }
 
 function appendInline(parent, value, taskId) {
-  /** Append safe links, images, emphasis, and code from one Markdown line. */
-  const pattern = /(!?)\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*/g;
+  /** Append safe links, images, math, emphasis, and code from one Markdown line. */
+  const pattern = /(!?)\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\$([^$\n]+)\$|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*/g;
   let position = 0;
   for (const match of value.matchAll(pattern)) {
     parent.append(document.createTextNode(value.slice(position, match.index)));
@@ -25,6 +25,7 @@ function appendInline(parent, value, taskId) {
         const image = document.createElement('img');
         image.src = href;
         image.alt = match[2];
+        image.loading = 'lazy';
         parent.append(image);
       } else {
         const link = document.createElement('a');
@@ -34,10 +35,15 @@ function appendInline(parent, value, taskId) {
         link.textContent = match[2];
         parent.append(link);
       }
+    } else if (match[5]) {
+      const formula = document.createElement('span');
+      if (globalThis.katex) globalThis.katex.render(match[5], formula, { throwOnError: false, trust: false });
+      else formula.textContent = match[0];
+      parent.append(formula);
     } else {
-      const tag = match[4] ? 'code' : match[7] ? 'em' : 'strong';
+      const tag = match[4] ? 'code' : match[8] ? 'em' : 'strong';
       const element = document.createElement(tag);
-      element.textContent = match[4] || match[5] || match[6] || match[7];
+      element.textContent = match[4] || match[6] || match[7] || match[8];
       parent.append(element);
     }
     position = match.index + match[0].length;
@@ -79,7 +85,6 @@ export function renderMarkdown(markdown, taskId = null) {
     }
     if (code) { code.textContent += `${source}\n`; continue; }
     if (!line) { list = null; paragraph = null; callout = null; continue; }
-
     const quoted = line.startsWith('>');
     if (quoted) {
       line = line.replace(/^>\s?/, '');
@@ -98,6 +103,20 @@ export function renderMarkdown(markdown, taskId = null) {
       }
     } else callout = null;
     const parent = callout || container;
+
+    if (line.startsWith('$$')) {
+      const formula = [line.slice(2)];
+      while (!formula.at(-1).endsWith('$$') && index + 1 < lines.length) formula.push(lines[++index].replace(/^>\s?/, '').trim());
+      formula[formula.length - 1] = formula.at(-1).replace(/\$\$$/, '');
+      const block = document.createElement('div');
+      block.className = 'math-block';
+      if (globalThis.katex) globalThis.katex.render(formula.join('\n'), block, { displayMode: true, throwOnError: false, trust: false });
+      else block.textContent = `$$${formula.join('\n')}$$`;
+      parent.append(block);
+      list = null;
+      paragraph = null;
+      continue;
+    }
 
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
