@@ -41,8 +41,6 @@ class TaskWorkflowService:
     def create_root_task(self, title: str) -> dict:
         """Create a root task and a branch from dev; return its record."""
         with self.lock:
-            if self.agent and self.agent.active_tasks:
-                raise ValueError("Agentの実行が終わってからタスクを作成してください")
             task_id = uuid4().hex[:12]
             branch = task_branch_name(title, task_id)
             self.git.ensure(branch, "dev")
@@ -62,8 +60,8 @@ class TaskWorkflowService:
             parent = read_task(self.tasks_root, parent_id)
             if parent["status"] == "completed":
                 raise ValueError("完了済みタスクには子タスクを追加できません")
-            if self.agent and self.agent.active_tasks:
-                raise ValueError("Agentの実行が終わってから子タスクを作成してください")
+            if self.agent and self.agent.related_active(parent_id):
+                raise ValueError("親子タスクでAgentを実行中です")
             proposal = None
             if proposal_id:
                 proposal = next((item for item in parent["child_proposals"] if item["id"] == proposal_id), None)
@@ -249,8 +247,8 @@ class TaskWorkflowService:
     def complete_task(self, task_id: str, expected: dict) -> dict:
         """Merge an approved task branch and return its completed record."""
         with self.lock:
-            if self.agent and self.agent.active_tasks:
-                raise ValueError("Agentの実行が終わってから完了してください")
+            if self.agent and self.agent.related_active(task_id):
+                raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             preview = self.completion_preview(task_id)
             if any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number")):
                 raise ValueError("確認後にタスクの状態が変わりました。再確認してください")

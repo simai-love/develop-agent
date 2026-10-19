@@ -59,8 +59,16 @@ class AgentManager:
         self.runs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
         self.active_tasks: set[str] = set()
-        self.implementation_running = False
         self.lock = threading.RLock()
+
+    def related_active(self, task_id: str) -> bool:
+        """Return whether task_id or an ancestor or descendant has an active run."""
+        task = read_task(self.tasks_root, task_id)
+        ancestors = set()
+        while task.get("parent_id"):
+            ancestors.add(task["parent_id"])
+            task = read_task(self.tasks_root, task["parent_id"])
+        return bool(self.active_tasks.intersection({task_id, *ancestors, *task_subtree(self.tasks_root, task_id)}))
 
     def availability(self) -> dict:
         """Return CLI availability and Codex's picker-visible model catalog."""
@@ -113,12 +121,12 @@ class AgentManager:
         if not isinstance(additional_instruction, str):
             raise ValueError("追加指示は文字列で入力してください")
         with self.lock:
-            if self.active_tasks:
-                raise ValueError("Agentの実行が終わってから並列実行してください")
             for task_id in task_ids:
                 task = read_task(self.tasks_root, task_id)
                 if not self.cli_paths[task["provider"]]:
                     raise ValueError(f"{task['provider']} CLI is not installed")
+                if self.related_active(task_id):
+                    raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             self.workflow.prepare_parallel_children(parent_id, task_ids)
             return [self.start_implementation(task_id, additional_instruction) for task_id in task_ids]
 
@@ -140,8 +148,8 @@ class AgentManager:
         if not isinstance(instruction, str):
             raise ValueError("コミット方針は文字列で入力してください")
         with self.lock:
-            if self.active_tasks:
-                raise ValueError("Agentの実行が終わってからタスクを完了してください")
+            if self.related_active(task_id):
+                raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             task = read_task(self.tasks_root, task_id)
             if not self.cli_paths[task["provider"]]:
                 raise ValueError(f"{task['provider']} CLI is not installed")
@@ -254,23 +262,14 @@ class AgentManager:
         writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         with self.lock:
             task = read_task(self.tasks_root, task_id)
-            if any(item["kind"] == "commit" and item["state"] == "running" for item in self.runs.values()):
-                raise ValueError("コミット中のタスクがあります")
             if task["status"] == "completed":
                 raise ValueError("完了済みタスクではAgentを実行できません")
             if not self.cli_paths[task["provider"]]:
                 raise ValueError(f"{task['provider']} CLI is not installed")
-            if task_id in self.active_tasks:
-                raise ValueError("This task already has an active Agent run")
-            if writes_code and self.implementation_running:
-                current_branch = self.workflow.branch_for(task_id) if self.workflow else None
-                active_code = [item for item in self.runs.values() if item["state"] == "running" and (item["kind"] == "implement" or item["kind"] == "chat" and item["phase"] == "result")]
-                if not current_branch or not task["branch"] or any(self.workflow.branch_for(item["task_id"]) == current_branch for item in active_code):
-                    raise ValueError("Another implementation is running on this branch")
-            if not writes_code and self.implementation_running:
-                raise ValueError("Wait for the implementation to finish")
-            if writes_code and any(item["kind"] == "chat" and item["state"] == "running" for item in self.runs.values()):
-                raise ValueError("Wait for active chats to finish")
+            if not self.workflow and self.active_tasks:
+                raise ValueError("Git作業領域のないタスクは同時実行できません")
+            if self.related_active(task_id):
+                raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             if kind == "implement" and not read_task(self.tasks_root, task_id)["can_implement"]:
                 raise ValueError("Agent has not approved the saved plan for implementation")
             if writes_code and self.workflow:
@@ -281,8 +280,6 @@ class AgentManager:
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
             set_run_cancelled(self.tasks_root, task_id, False)
-            if writes_code:
-                self.implementation_running = True
         if kind == "chat":
             append_chat(self.tasks_root, task_id, phase, "user", message)
             if phase == "plan":
@@ -447,8 +444,6 @@ class AgentManager:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
             self.cancel_events.pop(run_id, None)
-            if writes_code:
-                self.implementation_running = any(item["state"] == "running" and (item["kind"] == "implement" or item["kind"] == "chat" and item["phase"] == "result") for item in self.runs.values())
 
     def _chat_prompt(self, task_id: str, phase: str) -> str:
         """Build a task-local prompt from a task ID and phase; return text."""
