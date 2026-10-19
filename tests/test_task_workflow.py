@@ -2,11 +2,14 @@
 
 import json
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from app.storage import append_report, read_task, report_draft_path, write_text
+from app.agent import AgentManager
+from app.storage import append_report, read_task, report_draft_path, set_implementation, set_readiness, update_task, write_text
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService
 
@@ -58,6 +61,65 @@ class TaskWorkflowTest(unittest.TestCase):
         self.service.complete_task(root["id"], preview)
         self.assertEqual((self.repo / "feature.txt").read_text(), "done\n")
         self.assertEqual(read_task(self.service.tasks_root, root["id"])["status"], "completed")
+
+    def test_independent_task_agents_run_together(self):
+        """Run independent task Agents together and block a related parent."""
+        cli = self.repo / "fake-codex"
+        cli.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys, time\n"
+            "sys.stdin.read()\n"
+            "print(json.dumps({'type': 'item.started', 'item': {'id': 'wait', 'type': 'command_execution', 'command': 'wait'}}), flush=True)\n"
+            "time.sleep(30)\n",
+            encoding="utf-8",
+        )
+        cli.chmod(0o755)
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
+        self.service.agent = manager
+        parent = self.service.create_root_task("親")
+        child = self.service.create_child(parent["id"], "子")
+        other = self.service.create_root_task("別の親")
+        for task in (child, other):
+            update_task(self.service.tasks_root, task["id"], {"plan": "# 計画\n実装"})
+            set_readiness(self.service.tasks_root, task["id"], True, "# 計画\n実装", "実装可能")
+        first = manager.start_implementation(child["id"])
+        second = manager.start_implementation(other["id"])
+        self.assertEqual(manager.active_tasks, {child["id"], other["id"]})
+        self.assertNotEqual(self.service.code_path(child["id"]), self.service.code_path(other["id"]))
+        with self.assertRaisesRegex(ValueError, "親子タスク"):
+            manager.start_chat(parent["id"], "plan", "計画を確認")
+        with self.assertRaisesRegex(ValueError, "親子タスク"):
+            self.service.create_child(parent["id"], "別の子")
+        for run in (first, second):
+            manager.cancel_run(run["id"])
+        deadline = time.monotonic() + 5
+        while manager.active_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(manager.active_tasks)
+
+    def test_commit_agent_starts_while_another_task_runs(self):
+        """Allow an approved commit Agent beside an unrelated task Agent."""
+        cli = self.repo / "fake-codex"
+        cli.write_text(f"#!{sys.executable}\nimport sys, time\nsys.stdin.read()\ntime.sleep(30)\n", encoding="utf-8")
+        cli.chmod(0o755)
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
+        self.service.agent = manager
+        running = self.service.create_root_task("進行中")
+        committing = self.service.create_root_task("完了待ち")
+        first = manager.start_chat(running["id"], "plan", "計画")
+        self.service.claim_code(committing["id"])
+        (self.service.code_path(committing["id"]) / "feature.txt").write_text("done\n", encoding="utf-8")
+        set_implementation(self.service.tasks_root, committing["id"], "succeeded", ["feature.txt"])
+        write_text(report_draft_path(self.service.tasks_root, committing["id"]), "# 検証\n")
+        append_report(self.service.tasks_root, committing["id"], "supported", ["feature.txt"], [], "codex", "test", False)
+        second = manager.start_commit(committing["id"], self.service.completion_preview(committing["id"]))
+        self.assertEqual(manager.active_tasks, {running["id"], committing["id"]})
+        for run in (first, second):
+            manager.cancel_run(run["id"])
+        deadline = time.monotonic() + 5
+        while manager.active_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(manager.active_tasks)
 
     def test_existing_project_records_become_task_owned(self):
         """Keep existing task IDs and reports while assigning each task a branch."""

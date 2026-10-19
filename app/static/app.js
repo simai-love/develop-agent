@@ -31,13 +31,13 @@ function renderParallelChildren() {
     input.addEventListener('change', () => {
       if (input.checked) parallelSelection.ids.add(item.id);
       else parallelSelection.ids.delete(item.id);
-      $('#parallel-button').disabled = parallelSelection.ids.size < 2 || state.tasks.some(isTaskBusy);
+      $('#parallel-button').disabled = parallelSelection.ids.size < 2 || isTaskBusy(parent);
     });
     label.append(input, document.createTextNode(` ${item.title}${input.disabled ? '（計画確認または未着手が必要）' : ''}`));
     return label;
   }));
   for (const id of parallelSelection.ids) if (!available.some((item) => item.id === id)) parallelSelection.ids.delete(id);
-  $('#parallel-button').disabled = parallelSelection.ids.size < 2 || state.tasks.some(isTaskBusy);
+  $('#parallel-button').disabled = parallelSelection.ids.size < 2 || isTaskBusy(parent);
 }
 
 function isTaskBusy(task) {
