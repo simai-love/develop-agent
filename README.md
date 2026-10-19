@@ -39,6 +39,7 @@ bash scripts/run.sh
 | 起動処理を調べる人 | [scripts/](scripts/README.md) | 環境同期とサーバー起動のスクリプト |
 | 動作確認をする開発者 | [tests/](tests/README.md) | Python と JavaScript のテスト |
 | Agent の動作を調べる人 | [.codex/](.codex/README.md) | GUI と Agent の連携方針 |
+| このアプリの実装計画を確認する人 | [.codex/plans/](.codex/plans/README.md) | 開発中の実装計画と作業メモの置き場 |
 | Agent の作業手順を調べる人 | [.codex/skills/](.codex/skills/README.md) | 利用可能なスキル |
 | Markdown 文書を作る人 | [.codex/skills/document-writing/](.codex/skills/document-writing/README.md) | 構成設計、執筆、見直しの手順 |
 | 研究開発タスクの指示を調べる人 | [.codex/skills/research-workflow/](.codex/skills/research-workflow/README.md) | 計画・検証の共通手順 |

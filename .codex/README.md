@@ -7,3 +7,5 @@ Agent は独立して検証できる作業を `child_task_proposals` で提案�
 タスクの記録は Git 管理から除外した `tasks/` に置き、`app/` や `docs/` に混ぜません。タスクの内容はこのアプリのコミットに含めません。
 
 作業の共通指示は [研究開発スキル](skills/research-workflow/SKILL.md)、画面別の指示と JSON Schema は [references](skills/research-workflow/references/README.md) にあります。01・02 のチャットと実装ボタンの追加指示は [app/agent.py](../app/agent.py) にあります。
+
+このアプリ自体の開発に使う実装計画書は [plans/](plans/README.md) に置きます。GUI で作る各研究タスクの計画は従来どおり `tasks/<id>/plan.md` に保存します。
