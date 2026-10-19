@@ -11,7 +11,6 @@ from uuid import uuid4
 from app.agent_stream import run_streamed
 from app.evidence import list_evidence
 from app.model_catalog import codex_models
-from app.projects import read_project
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
 
@@ -40,6 +39,11 @@ def valid_proposals(value: object) -> bool:
     """Return whether value is a list of complete child task proposals."""
     fields = {"title", "purpose", "scope", "verification", "reason"}
     return isinstance(value, list) and all(isinstance(item, dict) and set(item) == fields and all(isinstance(item[key], str) and item[key].strip() for key in fields) for item in value)
+
+
+def prompt_excerpt(value: str, limit: int = 3000) -> str:
+    """Return at most limit characters of text for a CLI prompt."""
+    return value if len(value) <= limit else value[:limit] + "\n…（続きは保存済みファイルを参照）"
 
 
 class AgentManager:
@@ -123,7 +127,7 @@ class AgentManager:
         task = read_task(self.tasks_root, task_id)
         if task["status"] == "completed":
             raise ValueError("完了済みタスクの総括は更新できません")
-        if self.workflow and read_project(self.workflow.projects_root, task["project_id"]).get("needs_review"):
+        if task.get("migration_pending"):
             raise ValueError("移行前のGit変更を確認してください")
         if not self.workflow or not self.workflow.children(task_id):
             raise ValueError("総括する子タスクがありません")
@@ -269,7 +273,7 @@ class AgentManager:
                 raise ValueError("Wait for active chats to finish")
             if kind == "implement" and not read_task(self.tasks_root, task_id)["can_implement"]:
                 raise ValueError("Agent has not approved the saved plan for implementation")
-            if writes_code and self.workflow and task["project_id"]:
+            if writes_code and self.workflow:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
             run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "activity": [], "cancel_requested": False, "cancelable": True}
@@ -303,7 +307,7 @@ class AgentManager:
         previous_reports = []
         writes_code = kind == "implement" or (kind == "chat" and phase == "result")
         try:
-            code_root = self.workflow.code_path(task_id) if self.workflow and read_task(self.tasks_root, task_id)["project_id"] else self.project_root
+            code_root = self.workflow.code_path(task_id) if self.workflow else self.project_root
             before = self._change_snapshot(code_root)
             current_task = read_task(self.tasks_root, task_id)
             previous_reports = [(task_path / report["file"], report["content"]) for report in current_task["reports"]]
@@ -450,8 +454,9 @@ class AgentManager:
         """Build a task-local prompt from a task ID and phase; return text."""
         task = read_task(self.tasks_root, task_id)
         history = read_chat(self.tasks_root, task_id, phase)[-12:]
-        conversation = "\n".join(f"{item['role']}: {item['content']}" for item in history)
+        conversation = "\n".join(f"{item['role']}: {prompt_excerpt(item['content'], 1500)}" for item in history)
         evidence = list_evidence(self.tasks_root, task_id) if phase == "result" else []
+        recent_evidence = evidence[-20:]
         if phase == "plan":
             instructions = "01 計画チャットです。開発コードは変更せず、計画と実装可否を整理してください。"
             references = "references/01-plan.md と assets/plan-template.md"
@@ -469,10 +474,11 @@ class AgentManager:
             f"{'plan.md' if phase == 'plan' else 'report-draft.md'} を必要に応じて更新し、指定のJSON Schemaで短く返してください。"
             "ほかのタスクは変更しないでください。Gitコミットとマージは行わないでください。\n"
             f"タスク: {task['title']}\n画面: {phase}\n"
-            f"タスク保存先: {task_dir(self.tasks_root, task_id)}\n開発コードの場所: {self.workflow.code_path(task_id) if self.workflow and task['project_id'] else self.project_root}\n"
-            f"保存済みの計画:\n{task['plan']}\n最新のレポート:\n{task['result']}\n"
+            f"タスク保存先: {task_dir(self.tasks_root, task_id)}\n開発コードの場所: {self.workflow.code_path(task_id) if self.workflow else self.project_root}\n"
+            f"保存済みの計画:\n{prompt_excerpt(task['plan'], 10000)}\n最新のレポート抜粋:\n{prompt_excerpt(task['result'])}\n"
+            f"レポート全文: {task_dir(self.tasks_root, task_id) / task['reports'][-1]['file'] if task['reports'] else 'なし'}\n"
             f"検証資料フォルダ: {task_dir(self.tasks_root, task_id) / 'evidence'}\n"
-            f"検証資料: {json.dumps(evidence, ensure_ascii=False)}\n"
+            f"検証資料: 全{len(evidence)}件、最近の{len(recent_evidence)}件: {json.dumps(recent_evidence, ensure_ascii=False)}。必要なファイルだけ開いてください。\n"
             f"この画面の会話:\n{conversation}"
         )
 
@@ -497,7 +503,7 @@ class AgentManager:
         """Build a read-only summary prompt from task ID and instruction; return text."""
         task = read_task(self.tasks_root, task_id)
         children = [read_task(self.tasks_root, child["id"]) for child in self.workflow.children(task_id)]
-        details = "\n".join(f"{child['title']} / report={child['reports'][-1]['number'] if child['reports'] else 'なし'} / commit={child['merge_hash'] or child['commit_hash']} / result={child['result']}" for child in children)
+        details = "\n".join(f"{child['title']} / report={child['reports'][-1]['number'] if child['reports'] else 'なし'} / commit={child['merge_hash'] or child['commit_hash']} / result={prompt_excerpt(child['result'], 1500)} / 保存先={task_dir(self.tasks_root, child['id'])}" for child in children)
         return (
             "日本語で子タスクの結果を総括してください。コードとGitは変更しません。"
             "子タスクの資料リンクを親タスクの資料としてコピーせず、子タスク名とレポート番号で根拠を示してください。"

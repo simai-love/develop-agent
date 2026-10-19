@@ -47,6 +47,8 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("model", "")
     task.setdefault("provider", "codex")
     task.setdefault("project_id", None)
+    task.setdefault("root_id", task["id"] if task.get("parent_id") is None else task.get("project_id"))
+    task.setdefault("code_owner", False)
     task.setdefault("branch", None)
     task.setdefault("commit_hash", None)
     task.setdefault("commit_hashes", [task["commit_hash"]] if task["commit_hash"] else [])
@@ -143,6 +145,8 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
         "id": task_id,
         "parent_id": parent_id,
         "project_id": project_id,
+        "root_id": project_id or task_id,
+        "code_owner": False,
         "branch": None,
         "commit_hash": None,
         "commit_hashes": [],

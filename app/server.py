@@ -2,23 +2,25 @@
 
 import json
 import mimetypes
+import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
-from app.projects import list_projects, read_project
 from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, update_task
 from app.task_status import display_status
-from app.workflow import WorkflowService
+from app.task_workflow import TaskWorkflowService
+from app.workflow import WorkflowService as LegacyWorkflowService
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
+KATEX_ROOT = Path(__file__).resolve().parent / "cli" / "node_modules" / "katex" / "dist"
 TASKS_ROOT = PROJECT_ROOT / "tasks"
 PROJECTS_ROOT = PROJECT_ROOT / "projects"
-WORKFLOW = WorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT)
+WORKFLOW = TaskWorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT)
 AGENT = AgentManager(TASKS_ROOT, PROJECT_ROOT, workflow=WORKFLOW)
 WORKFLOW.agent = AGENT
 
@@ -49,28 +51,12 @@ class Handler(BaseHTTPRequestHandler):
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
         return {**task, "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
 
-    def present_project(self, project: dict) -> dict:
-        """Add task counts to project and return its API record."""
-        tasks = WORKFLOW.project_tasks(project["id"])
-        return {**project, "task_count": len(tasks), "completed_count": sum(task["status"] == "completed" for task in tasks)}
-
     def do_GET(self) -> None:
         """Return a task list, one task, or a static GUI asset."""
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/agent":
             self.send_json(200, AGENT.availability())
-            return
-        if path == "/api/projects":
-            self.send_json(200, [self.present_project(project) for project in list_projects(PROJECTS_ROOT)])
-            return
-        if path.startswith("/api/projects/"):
-            project_id = path.removeprefix("/api/projects/").removesuffix("/completion-preview")
-            try:
-                value = WORKFLOW.project_preview(project_id) if path.endswith("/completion-preview") else self.present_project(read_project(PROJECTS_ROOT, project_id))
-                self.send_json(200, value)
-            except (FileNotFoundError, ValueError) as error:
-                self.send_json(400, {"error": str(error)})
             return
         if path.startswith("/api/runs/"):
             run = AGENT.get_run(path.removeprefix("/api/runs/"))
@@ -103,13 +89,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if len(parts) == 5 and parts[3] == "evidence":
                     file_path = evidence_path(TASKS_ROOT, parts[2], parts[4])
-                    body = file_path.read_bytes()
+                    size = file_path.stat().st_size
                     self.send_response(200)
                     self.send_header("Content-Type", mimetypes.guess_type(file_path.name)[0] or "application/octet-stream")
                     self.send_header("X-Content-Type-Options", "nosniff")
-                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Length", str(size))
                     self.end_headers()
-                    self.wfile.write(body)
+                    with file_path.open("rb") as source:
+                        shutil.copyfileobj(source, self.wfile)
                     return
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Evidence not found"})
@@ -129,11 +116,19 @@ class Handler(BaseHTTPRequestHandler):
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Task not found"})
             return
-        filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs"}.get(path)
-        if filename is None:
-            self.send_error(404)
-            return
-        body = (STATIC_ROOT / filename).read_bytes()
+        if path.startswith("/vendor/katex/"):
+            filename = path.removeprefix("/vendor/katex/")
+            asset = (KATEX_ROOT / filename).resolve()
+            if not asset.is_relative_to(KATEX_ROOT) or not asset.is_file():
+                self.send_error(404)
+                return
+        else:
+            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs"}.get(path)
+            if filename is None:
+                self.send_error(404)
+                return
+            asset = STATIC_ROOT / filename
+        body = asset.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/javascript" if filename.endswith(".mjs") else mimetypes.guess_type(filename)[0] or "text/plain")
         self.send_header("Content-Length", str(len(body)))
@@ -151,20 +146,10 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
             return
-        if path == "/api/projects" or path.startswith("/api/projects/") or path.startswith("/api/tasks/") and (path.endswith("/children") or path.endswith("/summary") or path.endswith("/parallel-execute") or "/proposals/" in path):
+        if path.startswith("/api/tasks/") and (path.endswith("/children") or path.endswith("/summary") or path.endswith("/parallel-execute") or "/proposals/" in path):
             try:
                 body = self.read_json()
-                if path == "/api/projects":
-                    self.send_json(201, self.present_project(WORKFLOW.create_project(body["name"], body["slug"], body.get("first_task_title") or body["name"])))
-                elif path.startswith("/api/projects/") and path.endswith("/tasks"):
-                    project_id = path.removeprefix("/api/projects/").removesuffix("/tasks")
-                    self.send_json(201, self.present_task(WORKFLOW.create_root_task(project_id, body["title"])))
-                elif path.startswith("/api/projects/") and path.endswith("/complete"):
-                    self.send_json(200, self.present_project(WORKFLOW.complete_project(path.removeprefix("/api/projects/").removesuffix("/complete"), body)))
-                elif path.startswith("/api/projects/") and path.endswith("/acknowledge-migration"):
-                    project_id = path.removeprefix("/api/projects/").removesuffix("/acknowledge-migration")
-                    self.send_json(200, self.present_project(WORKFLOW.acknowledge_migration(project_id)))
-                elif path.endswith("/children"):
+                if path.endswith("/children"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/children")
                     self.send_json(201, self.present_task(WORKFLOW.create_child(task_id, body["title"], body.get("initial_plan", ""))))
                 elif path.endswith("/summary"):
@@ -219,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self.read_json()
             if path == "/api/tasks":
-                raise ValueError("プロジェクトまたは親タスクから作成してください")
+                self.send_json(201, self.present_task(WORKFLOW.create_root_task(body["title"])))
             elif path.endswith("/chat"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
                 self.send_json(202, AGENT.start_chat(task_id, body["phase"], body["message"]))
@@ -240,20 +225,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:
         """Update a task from a JSON request and return its record."""
         path = urlparse(self.path).path
-        if path.startswith("/api/projects/") and "/" not in path.removeprefix("/api/projects/"):
-            try:
-                body = self.read_json()
-                project_id = path.removeprefix("/api/projects/")
-                if set(body) == {"name"}:
-                    project = WORKFLOW.rename_project(project_id, body["name"])
-                elif set(body) == {"slug"}:
-                    project = WORKFLOW.rename_legacy_branch(project_id, body["slug"])
-                else:
-                    raise ValueError("更新するプロジェクト項目を指定してください")
-                self.send_json(200, self.present_project(project))
-            except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
-                self.send_json(400, {"error": str(error)})
-            return
         if not path.startswith("/api/tasks/"):
             self.send_error(404)
             return
@@ -271,13 +242,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         """Delete one task and its descendants; return their IDs."""
         path = urlparse(self.path).path
-        if path.startswith("/api/projects/") and "/" not in path.removeprefix("/api/projects/"):
-            try:
-                WORKFLOW.delete_project(path.removeprefix("/api/projects/"))
-                self.send_json(200, {"deleted": True})
-            except (FileNotFoundError, ValueError) as error:
-                self.send_json(400, {"error": str(error)})
-            return
         if not path.startswith("/api/tasks/") or "/" in path.removeprefix("/api/tasks/"):
             self.send_error(404)
             return
@@ -294,7 +258,8 @@ def main() -> None:
     """Start the local GUI server and return when it is interrupted."""
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     AGENT.recover_interrupted_runs()
-    WORKFLOW.migrate_legacy()
+    LegacyWorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT).recover_operations()
+    WORKFLOW.migrate_projects()
     WORKFLOW.recover_operations()
     assign_default_models(TASKS_ROOT)
     print("Develop Agent: http://127.0.0.1:8765", flush=True)

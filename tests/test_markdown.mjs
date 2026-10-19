@@ -43,6 +43,13 @@ const report = renderMarkdown('**結果**と `測定値`\n\n| 条件 | 値 |\n| 
 assert.equal(descendants(report, 'table').length, 1);
 assert.equal(descendants(report, 'code')[0].textContent, '測定値');
 assert.equal(descendants(report, 'img')[0].src, '/api/tasks/abcdef123456/evidence/plot.png');
+assert.equal(descendants(report, 'img')[0].loading, 'lazy');
+
+globalThis.katex = { render: (source, node, options) => { node.textContent = `${options.displayMode ? 'block' : 'inline'}:${source}`; } };
+const math = renderMarkdown('速度は $v = d/t$ です。\n\n$$\\frac{d}{t}$$');
+assert.equal(descendants(math, 'span').find((node) => node.textContent === 'inline:v = d/t').textContent, 'inline:v = d/t');
+assert.equal(descendants(math, 'div').find((node) => node.textContent === 'block:\\frac{d}{t}').textContent, 'block:\\frac{d}{t}');
+delete globalThis.katex;
 
 const unsafe = renderMarkdown('<script>alert(1)</script> [危険](javascript:alert)');
 assert.equal(descendants(unsafe, 'script').length, 0);
