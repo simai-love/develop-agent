@@ -3,5 +3,6 @@ __pycache__/
 *.py[cod]
 tasks/
 projects/
+.codex/repositories.local.json
 .DS_Store
 scripts/*

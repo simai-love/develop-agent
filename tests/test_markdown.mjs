@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { renderMarkdown } from '../app/static/markdown.mjs';
+import { renderMarkdown, setEvidenceRepository } from '../app/static/markdown.mjs';
 
 class FakeNode {
   /** Create a fake DOM node from tag and optional text; return the node. */
@@ -44,6 +44,11 @@ assert.equal(descendants(report, 'table').length, 1);
 assert.equal(descendants(report, 'code')[0].textContent, '測定値');
 assert.equal(descendants(report, 'img')[0].src, '/api/tasks/abcdef123456/evidence/plot.png');
 assert.equal(descendants(report, 'img')[0].loading, 'lazy');
+
+setEvidenceRepository('gpu_solver');
+const gpuReport = renderMarkdown('![GPU結果](../evidence/result.png)', 'abcdef123456');
+assert.equal(descendants(gpuReport, 'img')[0].src, '/api/tasks/abcdef123456/evidence/result.png?repo=gpu_solver');
+setEvidenceRepository('develop-agent');
 
 globalThis.katex = { render: (source, node, options) => { node.textContent = `${options.displayMode ? 'block' : 'inline'}:${source}`; } };
 const math = renderMarkdown('速度は $v = d/t$ です。\n\n$$\\frac{d}{t}$$');

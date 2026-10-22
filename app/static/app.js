@@ -1,11 +1,11 @@
-import { renderMarkdown } from './markdown.mjs';
+import { renderMarkdown, setEvidenceRepository } from './markdown.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
 const chatHeightStorageKey = 'develop-agent.chat-height';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
-const state = { tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
+const state = { repository: 'develop-agent', tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
 let parallelSelection = { parentId: null, ids: new Set() };
@@ -153,9 +153,15 @@ function modelSelected() {
   return state.task?.provider !== 'codex' || Boolean(state.task.model);
 }
 
-async function api(path, options = {}) {
+function repositoryUrl(path, repository = state.repository) {
+  /** Add repository to the API path and return its selected URL. */
+  if (path === '/api/repositories') return path;
+  return `${path}${path.includes('?') ? '&' : '?'}repo=${encodeURIComponent(repository)}`;
+}
+
+async function api(path, options = {}, repository = state.repository) {
   /** Send path and options to the local API; return its parsed JSON response. */
-  const response = await fetch(path, {
+  const response = await fetch(repositoryUrl(path, repository), {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
@@ -533,7 +539,7 @@ function renderEvidence() {
   for (const entry of state.evidence) {
     const card = document.createElement('div');
     card.className = 'evidence-card';
-    const url = `/api/tasks/${state.task.id}/evidence/${encodeURIComponent(entry.name)}`;
+    const url = repositoryUrl(`/api/tasks/${state.task.id}/evidence/${encodeURIComponent(entry.name)}`);
     if (entry.kind === 'image') {
       const link = document.createElement('a');
       link.href = url;
@@ -697,11 +703,13 @@ async function sendChat(message) {
   } catch (error) { toast(error.message); }
 }
 
-async function pollRun(runId, taskId) {
+async function pollRun(runId, taskId, repository) {
   /** Poll runId for taskId and refresh its view when finished; return nothing. */
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    const run = await api(`/api/runs/${runId}`);
+    if (state.repository !== repository) return;
+    const run = await api(`/api/runs/${runId}`, {}, repository);
+    if (state.repository !== repository) return;
     if (run.state === 'running') {
       state.activeRuns.set(taskId, run);
       if (state.task?.id === taskId) renderAgentProgress();
@@ -726,7 +734,7 @@ function watchRun(run) {
   /** Track a started Agent run and return nothing. */
   state.activeRuns.set(run.task_id, run);
   render();
-  pollRun(run.id, run.task_id).catch((error) => toast(error.message));
+  pollRun(run.id, run.task_id, state.repository).catch((error) => toast(error.message));
 }
 
 async function refreshUntrackedRun() {
@@ -828,6 +836,15 @@ function openDelete(taskId = state.task?.id) {
 function bindEvents() {
   /** Attach actions to task, editor, and dialog controls; return nothing. */
   let pendingCommit = null;
+  $('#repository-select').addEventListener('change', async (event) => {
+    const previous = state.repository;
+    if (hasChanges() && !window.confirm('未保存の変更を破棄してリポジトリを切り替えますか？')) {
+      event.target.value = previous;
+      return;
+    }
+    try { await switchRepository(event.target.value); }
+    catch (error) { event.target.value = previous; await switchRepository(previous); toast(error.message); }
+  });
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
   $('#home-button').addEventListener('click', () => {
@@ -970,7 +987,7 @@ function bindEvents() {
   $('#evidence-upload').addEventListener('change', async (event) => {
     for (const file of event.target.files) {
       try {
-        const response = await fetch(`/api/tasks/${state.task.id}/evidence?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+        const response = await fetch(repositoryUrl(`/api/tasks/${state.task.id}/evidence?name=${encodeURIComponent(file.name)}`), { method: 'POST', body: file });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
       } catch (error) { toast(error.message); }
@@ -1079,6 +1096,25 @@ function bindEvents() {
   window.addEventListener('beforeunload', (event) => { if (hasChanges()) event.preventDefault(); });
 }
 
+async function switchRepository(repository) {
+  /** Load repository's task and Agent state into the view; return nothing. */
+  const agent = await api('/api/agent', {}, repository);
+  const tasks = await api('/api/tasks', {}, repository);
+  state.repository = repository;
+  setEvidenceRepository(repository);
+  window.localStorage.setItem('develop-agent.repository', repository);
+  state.agentAvailability = agent.providers || { codex: agent.available, claude: false };
+  state.modelCatalog = agent.models || { codex: [], claude: [] };
+  state.tasks = tasks;
+  state.task = null;
+  state.messages = [];
+  state.evidence = [];
+  state.activeRuns.clear();
+  $('#repository-select').value = repository;
+  if (tasks.length) await selectTask(tasks[0].id);
+  else render();
+}
+
 async function main() {
   /** Initialize the local workspace; return when its first view is ready. */
   bindChatResize();
@@ -1087,14 +1123,11 @@ async function main() {
   setInterval(() => { if (state.tasks.some(isTaskBusy)) refreshTasks().catch(() => {}); }, 3000);
   $('#clock').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   try {
-    const agent = await api('/api/agent');
-    state.agentAvailability = agent.providers || { codex: agent.available, claude: false };
-    state.modelCatalog = agent.models || { codex: [], claude: [] };
-  } catch { toast('Agentに接続できません。サーバーを再起動してください'); }
-  try {
-    await refreshTasks();
-    if (state.tasks.length) await selectTask(state.tasks[0].id);
-    else render();
+    const repositories = await api('/api/repositories');
+    const select = $('#repository-select');
+    select.replaceChildren(...repositories.map((entry) => new Option(entry.name, entry.id)));
+    const stored = window.localStorage.getItem('develop-agent.repository');
+    await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent');
   } catch (error) { toast(error.message); }
 }
 

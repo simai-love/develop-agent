@@ -49,11 +49,15 @@ def prompt_excerpt(value: str, limit: int = 3000) -> str:
 class AgentManager:
     """Run selected Agent CLI requests and expose each run's current result."""
 
-    def __init__(self, tasks_root: Path, project_root: Path, cli_path: str | None = None, workflow=None):
-        """Initialize roots and an optional CLI path; return an idle manager."""
+    def __init__(self, tasks_root: Path, project_root: Path, cli_path: str | None = None, workflow=None, codex_sandbox: str = "workspace-write", process_env: dict[str, str] | None = None):
+        """Initialize roots, CLI settings, and process variables; return an idle manager."""
         self.tasks_root = tasks_root
         self.project_root = project_root
         self.workflow = workflow
+        if codex_sandbox not in {"workspace-write", "danger-full-access"}:
+            raise ValueError("Unsupported Codex sandbox")
+        self.codex_sandbox = codex_sandbox
+        self.process_env = process_env
         local_cli = project_root / "app" / "cli" / "node_modules" / ".bin" / "codex"
         self.cli_paths = {"codex": cli_path or (str(local_cli) if local_cli.exists() else shutil.which("codex")), "claude": shutil.which("claude")}
         self.runs: dict[str, dict] = {}
@@ -186,7 +190,7 @@ class AgentManager:
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
-            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id])
+            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
             with self.lock:
                 self.runs[run_id]["cancelable"] = False
             if result.returncode:
@@ -326,13 +330,16 @@ class AgentManager:
                     images = [entry for entry in list_evidence(self.tasks_root, task_id) if entry["kind"] == "image"][-4:]
                     if images:
                         command += ["--image", *(str(task_path / "evidence" / entry["name"]) for entry in images)]
-                command += ["--sandbox", "workspace-write", "--config", "sandbox_workspace_write.network_access=true", "-"]
+                command += ["--sandbox", self.codex_sandbox]
+                if self.codex_sandbox == "workspace-write":
+                    command += ["--config", "sandbox_workspace_write.network_access=true"]
+                command += ["-"]
             else:
                 command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
-            result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id])
+            result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
             with self.lock:
                 self.runs[run_id]["cancelable"] = False
                 cancelled = self.cancel_events[run_id].is_set()

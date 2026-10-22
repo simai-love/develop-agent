@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
+from app.repositories import RepositoryRegistry
 from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, update_task
 from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
@@ -23,10 +24,25 @@ PROJECTS_ROOT = PROJECT_ROOT / "projects"
 WORKFLOW = TaskWorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT)
 AGENT = AgentManager(TASKS_ROOT, PROJECT_ROOT, workflow=WORKFLOW)
 WORKFLOW.agent = AGENT
+REGISTRY = RepositoryRegistry(PROJECT_ROOT / ".codex" / "repositories.local.json", AGENT.cli_paths["codex"])
 
 
 class Handler(BaseHTTPRequestHandler):
     """Handle local HTTP requests and return HTML assets or JSON task records."""
+
+    def load_context(self) -> bool:
+        """Select the request's repository services and return whether it exists."""
+        repository_id = parse_qs(urlparse(self.path).query).get("repo", ["develop-agent"])[0]
+        try:
+            if repository_id == "develop-agent":
+                self.tasks_root, self.workflow, self.agent = TASKS_ROOT, WORKFLOW, AGENT
+            else:
+                context = REGISTRY.get(repository_id)
+                self.tasks_root, self.workflow, self.agent = context.tasks_root, context.workflow, context.agent
+            return True
+        except (KeyError, OSError, ValueError) as error:
+            self.send_json(400, {"error": str(error)})
+            return False
 
     def send_json(self, status: int, value: object) -> None:
         """Send value as a JSON response with the given HTTP status."""
@@ -43,32 +59,42 @@ class Handler(BaseHTTPRequestHandler):
 
     def present_task(self, task: dict) -> dict:
         """Add the task's current display status and return its API record."""
-        with AGENT.lock:
-            active = task["id"] in AGENT.active_tasks
-            active_run_id = next((run_id for run_id, run in AGENT.runs.items() if run["task_id"] == task["id"] and run["state"] == "running"), None)
-        full_task = task if "plan" in task else read_task(TASKS_ROOT, task["id"])
-        children = WORKFLOW.children(task["id"])
+        with self.agent.lock:
+            active = task["id"] in self.agent.active_tasks
+            active_run_id = next((run_id for run_id, run in self.agent.runs.items() if run["task_id"] == task["id"] and run["state"] == "running"), None)
+        full_task = task if "plan" in task else read_task(self.tasks_root, task["id"])
+        children = self.workflow.children(task["id"])
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
-        return {**task, "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(TASKS_ROOT, task["id"], "plan"), active, children)}
+        return {**task, "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(self.tasks_root, task["id"], "plan"), active, children)}
 
     def do_GET(self) -> None:
         """Return a task list, one task, or a static GUI asset."""
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == "/api/repositories":
+            try:
+                entries = [{"id": "develop-agent", "name": "Develop Agent", "path": str(PROJECT_ROOT)}]
+                entries.extend({"id": item["id"], "name": item["name"], "path": item["path"]} for item in REGISTRY.entries())
+                self.send_json(200, entries)
+            except (KeyError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
+        if path.startswith("/api/") and not self.load_context():
+            return
         if path == "/api/agent":
-            self.send_json(200, AGENT.availability())
+            self.send_json(200, self.agent.availability())
             return
         if path.startswith("/api/runs/"):
-            run = AGENT.get_run(path.removeprefix("/api/runs/"))
+            run = self.agent.get_run(path.removeprefix("/api/runs/"))
             self.send_json(200 if run else 404, run or {"error": "Run not found"})
             return
         if path == "/api/tasks":
-            self.send_json(200, [self.present_task(task) for task in list_tasks(TASKS_ROOT)])
+            self.send_json(200, [self.present_task(task) for task in list_tasks(self.tasks_root)])
             return
         if path.startswith("/api/tasks/") and path.endswith("/completion-preview"):
             try:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/completion-preview")
-                self.send_json(200, WORKFLOW.completion_preview(task_id))
+                self.send_json(200, self.workflow.completion_preview(task_id))
             except (FileNotFoundError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -76,7 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/diff")
                 selected_path = parse_qs(parsed.query).get("path", [None])[0]
-                self.send_json(200, WORKFLOW.task_diff(task_id, selected_path))
+                self.send_json(200, self.workflow.task_diff(task_id, selected_path))
             except (FileNotFoundError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -84,11 +110,11 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.strip("/").split("/")
             try:
                 if len(parts) == 4 and parts[3] == "evidence":
-                    read_task(TASKS_ROOT, parts[2])
-                    self.send_json(200, list_evidence(TASKS_ROOT, parts[2]))
+                    read_task(self.tasks_root, parts[2])
+                    self.send_json(200, list_evidence(self.tasks_root, parts[2]))
                     return
                 if len(parts) == 5 and parts[3] == "evidence":
-                    file_path = evidence_path(TASKS_ROOT, parts[2], parts[4])
+                    file_path = evidence_path(self.tasks_root, parts[2], parts[4])
                     size = file_path.stat().st_size
                     self.send_response(200)
                     self.send_header("Content-Type", mimetypes.guess_type(file_path.name)[0] or "application/octet-stream")
@@ -105,14 +131,14 @@ class Handler(BaseHTTPRequestHandler):
             task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
             phase = parse_qs(parsed.query).get("phase", ["plan"])[0]
             try:
-                read_task(TASKS_ROOT, task_id)
-                self.send_json(200, read_chat(TASKS_ROOT, task_id, phase))
+                read_task(self.tasks_root, task_id)
+                self.send_json(200, read_chat(self.tasks_root, task_id, phase))
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Task or chat phase not found"})
             return
         if path.startswith("/api/tasks/"):
             try:
-                self.send_json(200, self.present_task(read_task(TASKS_ROOT, path.removeprefix("/api/tasks/"))))
+                self.send_json(200, self.present_task(read_task(self.tasks_root, path.removeprefix("/api/tasks/"))))
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Task not found"})
             return
@@ -139,10 +165,12 @@ class Handler(BaseHTTPRequestHandler):
         """Create a task or Agent run from JSON and return its record."""
         parsed = urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/") and not self.load_context():
+            return
         if path.startswith("/api/runs/") and path.endswith("/cancel"):
             try:
                 run_id = path.removeprefix("/api/runs/").removesuffix("/cancel")
-                self.send_json(202, AGENT.cancel_run(run_id))
+                self.send_json(202, self.agent.cancel_run(run_id))
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -151,13 +179,13 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json()
                 if path.endswith("/children"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/children")
-                    self.send_json(201, self.present_task(WORKFLOW.create_child(task_id, body["title"], body.get("initial_plan", ""))))
+                    self.send_json(201, self.present_task(self.workflow.create_child(task_id, body["title"], body.get("initial_plan", ""))))
                 elif path.endswith("/summary"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/summary")
-                    self.send_json(202, AGENT.start_summary(task_id, body.get("additional_instruction", "")))
+                    self.send_json(202, self.agent.start_summary(task_id, body.get("additional_instruction", "")))
                 elif path.endswith("/parallel-execute"):
                     task_id = path.removeprefix("/api/tasks/").removesuffix("/parallel-execute")
-                    self.send_json(202, AGENT.start_parallel_children(task_id, body["task_ids"], body.get("additional_instruction", "")))
+                    self.send_json(202, self.agent.start_parallel_children(task_id, body["task_ids"], body.get("additional_instruction", "")))
                 elif "/proposals/" in path:
                     parts = path.strip("/").split("/")
                     if len(parts) != 6 or parts[0] != "api" or parts[1] != "tasks" or parts[3] != "proposals":
@@ -165,7 +193,7 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     task_id, proposal_id, action = parts[2], parts[4], parts[5]
                     if action == "approve":
-                        task = read_task(TASKS_ROOT, task_id)
+                        task = read_task(self.tasks_root, task_id)
                         proposal = next((item for item in task["child_proposals"] if item["id"] == proposal_id), None)
                         if not proposal:
                             raise ValueError("分割案が見つかりません")
@@ -176,9 +204,9 @@ class Handler(BaseHTTPRequestHandler):
                         if not all((title, purpose, scope, verification)):
                             raise ValueError("子タスク案の各項目を入力してください")
                         initial_plan = "\n".join((f"# {title}", f"## 目的\n{purpose}", f"## 実装方針\n{scope}", f"## 確かめ方\n{verification}"))
-                        self.send_json(201, self.present_task(WORKFLOW.create_child(task_id, title, initial_plan, proposal_id)))
+                        self.send_json(201, self.present_task(self.workflow.create_child(task_id, title, initial_plan, proposal_id)))
                     elif action == "reject":
-                        self.send_json(200, self.present_task(WORKFLOW.reject_proposal(task_id, proposal_id)))
+                        self.send_json(200, self.present_task(self.workflow.reject_proposal(task_id, proposal_id)))
                     else:
                         self.send_error(404)
                 else:
@@ -189,12 +217,12 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/tasks/") and path.endswith("/evidence"):
             try:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/evidence")
-                read_task(TASKS_ROOT, task_id)
+                read_task(self.tasks_root, task_id)
                 size = int(self.headers.get("Content-Length", "0"))
                 if size < 1 or size > MAX_EVIDENCE_BYTES:
                     raise ValueError("Evidence must be between 1 byte and 100 MB")
                 name = parse_qs(parsed.query).get("name", [""])[0]
-                self.send_json(201, save_evidence(TASKS_ROOT, task_id, name, self.rfile.read(size)))
+                self.send_json(201, save_evidence(self.tasks_root, task_id, name, self.rfile.read(size)))
             except (FileNotFoundError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
@@ -204,36 +232,38 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self.read_json()
             if path == "/api/tasks":
-                self.send_json(201, self.present_task(WORKFLOW.create_root_task(body["title"])))
+                self.send_json(201, self.present_task(self.workflow.create_root_task(body["title"])))
             elif path.endswith("/chat"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
-                self.send_json(202, AGENT.start_chat(task_id, body["phase"], body["message"]))
+                self.send_json(202, self.agent.start_chat(task_id, body["phase"], body["message"]))
             elif path.endswith("/complete"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/complete")
-                if task_id in AGENT.active_tasks:
+                if task_id in self.agent.active_tasks:
                     raise ValueError("Cannot complete a task during an Agent run")
                 if body.get("kind") == "commit":
-                    self.send_json(202, AGENT.start_commit(task_id, body, body.get("commit_instruction", "")))
+                    self.send_json(202, self.agent.start_commit(task_id, body, body.get("commit_instruction", "")))
                 else:
-                    self.send_json(200, self.present_task(WORKFLOW.complete_task(task_id, body)))
+                    self.send_json(200, self.present_task(self.workflow.complete_task(task_id, body)))
             else:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/execute")
-                self.send_json(202, AGENT.start_implementation(task_id, body.get("additional_instruction", "")))
+                self.send_json(202, self.agent.start_implementation(task_id, body.get("additional_instruction", "")))
         except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
             self.send_json(400, {"error": str(error)})
 
     def do_PATCH(self) -> None:
         """Update a task from a JSON request and return its record."""
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self.load_context():
+            return
         if not path.startswith("/api/tasks/"):
             self.send_error(404)
             return
         try:
             task_id = path.removeprefix("/api/tasks/")
             changes = self.read_json()
-            if task_id in AGENT.active_tasks and ({"title", "plan", "model", "provider"} & changes.keys()):
+            if task_id in self.agent.active_tasks and ({"title", "plan", "model", "provider"} & changes.keys()):
                 raise ValueError("Cannot change task metadata during an Agent run")
-            self.send_json(200, self.present_task(update_task(TASKS_ROOT, task_id, changes)))
+            self.send_json(200, self.present_task(update_task(self.tasks_root, task_id, changes)))
         except FileNotFoundError:
             self.send_json(404, {"error": "Task not found"})
         except (KeyError, TypeError, ValueError) as error:
@@ -242,11 +272,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         """Delete one task and its descendants; return their IDs."""
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self.load_context():
+            return
         if not path.startswith("/api/tasks/") or "/" in path.removeprefix("/api/tasks/"):
             self.send_error(404)
             return
         try:
-            deleted_ids = WORKFLOW.delete_task(path.removeprefix("/api/tasks/"))
+            deleted_ids = self.workflow.delete_task(path.removeprefix("/api/tasks/"))
             self.send_json(200, {"deleted_ids": deleted_ids})
         except FileNotFoundError:
             self.send_json(404, {"error": "Task not found"})

@@ -1,9 +1,19 @@
 "use strict";
 
+let repositoryId = 'develop-agent';
+
+export function setEvidenceRepository(id) {
+  /** Store id for task evidence URLs and return nothing. */
+  repositoryId = id;
+}
+
 function safeHref(value, taskId) {
   /** Convert a safe Markdown destination to a URL, or return null. */
   const evidence = value.match(/^(?:\.\.\/)?evidence\/([A-Za-z0-9._-]+)$/);
-  if (evidence && taskId) return `/api/tasks/${taskId}/evidence/${encodeURIComponent(evidence[1])}`;
+  if (evidence && taskId) {
+    const path = `/api/tasks/${taskId}/evidence/${encodeURIComponent(evidence[1])}`;
+    return repositoryId === 'develop-agent' ? path : `${path}?repo=${encodeURIComponent(repositoryId)}`;
+  }
   try {
     const url = new URL(value);
     return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
