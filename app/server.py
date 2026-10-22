@@ -24,7 +24,7 @@ PROJECTS_ROOT = PROJECT_ROOT / "projects"
 WORKFLOW = TaskWorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT)
 AGENT = AgentManager(TASKS_ROOT, PROJECT_ROOT, workflow=WORKFLOW)
 WORKFLOW.agent = AGENT
-REGISTRY = RepositoryRegistry(PROJECT_ROOT / ".codex" / "repositories.local.json", AGENT.cli_paths["codex"])
+REGISTRY = RepositoryRegistry(PROJECT_ROOT / ".codex" / "repositories.local.json", AGENT.cli_paths["codex"], TASKS_ROOT)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,6 +165,13 @@ class Handler(BaseHTTPRequestHandler):
         """Create a task or Agent run from JSON and return its record."""
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == "/api/repositories":
+            try:
+                body = self.read_json()
+                self.send_json(201, REGISTRY.add(body["name"], body["path"], body.get("gpu", False)))
+            except (KeyError, OSError, TypeError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path.startswith("/api/") and not self.load_context():
             return
         if path.startswith("/api/runs/") and path.endswith("/cancel"):

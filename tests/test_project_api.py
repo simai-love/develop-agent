@@ -34,7 +34,8 @@ class TaskApiTest(unittest.TestCase):
             config = Path(temporary) / "repositories.json"
             config.write_text(json.dumps([{"id": "sample", "name": "Sample", "path": str(repo)}]), encoding="utf-8")
             previous = server.REGISTRY
-            server.REGISTRY = RepositoryRegistry(config, None)
+            central_tasks = Path(temporary) / "central-tasks"
+            server.REGISTRY = RepositoryRegistry(config, None, central_tasks)
             http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
             thread = threading.Thread(target=http.serve_forever, daemon=True)
             thread.start()
@@ -45,7 +46,8 @@ class TaskApiTest(unittest.TestCase):
                 request = Request(base + "/api/tasks?repo=sample", data=json.dumps({"title": "別リポジトリのタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     task = json.load(response)
-                self.assertTrue((repo / "tasks" / task["id"] / "task.json").exists())
+                self.assertTrue((central_tasks / "sample" / task["id"] / "task.json").exists())
+                self.assertFalse((repo / "tasks" / task["id"] / "task.json").exists())
                 with urlopen(base + "/api/tasks?repo=sample") as response:
                     self.assertEqual([item["id"] for item in json.load(response)], [task["id"]])
                 with urlopen(base + "/api/tasks") as response:
@@ -53,6 +55,22 @@ class TaskApiTest(unittest.TestCase):
                 with self.assertRaises(HTTPError) as error:
                     urlopen(base + "/api/tasks?repo=unknown")
                 self.assertEqual(error.exception.code, 400)
+                next_repo = Path(temporary) / "next-repo"
+                next_repo.mkdir()
+                subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=next_repo, check=True)
+                subprocess.run(["git", "config", "user.name", "Test"], cwd=next_repo, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=next_repo, check=True)
+                (next_repo / ".gitignore").write_text("tasks/\n", encoding="utf-8")
+                subprocess.run(["git", "add", "."], cwd=next_repo, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=next_repo, check=True)
+                request = Request(base + "/api/repositories", data=json.dumps({"name": "Next", "path": str(next_repo)}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                with urlopen(request) as response:
+                    entry = json.load(response)
+                self.assertEqual(entry["id"], "next-repo")
+                request = Request(base + "/api/tasks?repo=next-repo", data=json.dumps({"title": "追加先のタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                with urlopen(request) as response:
+                    next_task = json.load(response)
+                self.assertTrue((central_tasks / "next-repo" / next_task["id"] / "task.json").exists())
             finally:
                 http.shutdown()
                 http.server_close()
