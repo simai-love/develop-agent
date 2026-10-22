@@ -13,11 +13,51 @@ from urllib.request import Request, urlopen
 
 from app import server
 from app.agent import AgentManager
+from app.repositories import RepositoryRegistry
 from app.task_workflow import TaskWorkflowService
 
 
 class TaskApiTest(unittest.TestCase):
     """Check API routes with isolated storage and Git history."""
+
+    def test_registered_repository_uses_its_own_tasks_and_git(self):
+        """Route selected task creation to its repository and return its records."""
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "sample"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            (repo / ".gitignore").write_text("tasks/\nprojects/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=repo, check=True)
+            config = Path(temporary) / "repositories.json"
+            config.write_text(json.dumps([{"id": "sample", "name": "Sample", "path": str(repo)}]), encoding="utf-8")
+            previous = server.REGISTRY
+            server.REGISTRY = RepositoryRegistry(config, None)
+            http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=http.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{http.server_port}"
+                with urlopen(base + "/api/repositories") as response:
+                    self.assertIn("sample", [item["id"] for item in json.load(response)])
+                request = Request(base + "/api/tasks?repo=sample", data=json.dumps({"title": "別リポジトリのタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                with urlopen(request) as response:
+                    task = json.load(response)
+                self.assertTrue((repo / "tasks" / task["id"] / "task.json").exists())
+                with urlopen(base + "/api/tasks?repo=sample") as response:
+                    self.assertEqual([item["id"] for item in json.load(response)], [task["id"]])
+                with urlopen(base + "/api/tasks") as response:
+                    self.assertNotIn(task["id"], [item["id"] for item in json.load(response)])
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(base + "/api/tasks?repo=unknown")
+                self.assertEqual(error.exception.code, 400)
+            finally:
+                http.shutdown()
+                http.server_close()
+                thread.join(timeout=2)
+                server.REGISTRY = previous
 
     def test_root_and_child_creation_routes(self):
         """Create root and child over HTTP and verify separate branches."""

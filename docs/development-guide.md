@@ -7,6 +7,7 @@
 | 場所 | 役割 |
 | --- | --- |
 | `app/server.py` | ローカル HTTP API と静的ファイルの配信 |
+| `app/repositories.py` | 端末固有のリポジトリ登録と、選択先ごとのタスクサービス |
 | `app/static/` | タスク一覧、計画、チャット、レポートの画面 |
 | `app/task_workflow.py` | タスク専用ブランチ、完了、統合、既存記録の移行 |
 | `app/git/workspace.py` | Git のブランチ、worktree、差分、コミット、`--no-ff` マージ |
@@ -15,6 +16,8 @@
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
 
 ## タスクと Git
+
+`GET /api/repositories` は登録済みの作業先を返します。各タスク API は `repo` クエリで作業先を選びます。省略時は `develop-agent` です。`gpu_solver` を選ぶと、そのリポジトリの `tasks/`、Git ブランチ、worktree を参照します。登録は Git 管理外の `.codex/repositories.local.json` に置きます。GPU 登録で WSL の `/dev/dxg` がある場合は、GPU 側の旧アプリと同じ Codex サンドボックス設定と HPC SDK の環境変数を Agent の子プロセスへ渡します。登録先を一覧で開くだけでは、既存タスクの回復処理や移行処理を走らせません。
 
 `POST /api/tasks` は最上位タスクと `dev` からの専用ブランチを作ります。`POST /api/tasks/<id>/children` は親ブランチから子の専用ブランチを作ります。各タスクの `task.json` は `parent_id`、`root_id`、`branch`、作業の状態、コミット ID を持ちます。GUI が管理するタスクの記録は `tasks/` に置き、Git から除外します。
 

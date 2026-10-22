@@ -46,12 +46,12 @@ def _claude_tool_label(block: dict) -> str:
     return str(detail) if name == "Bash" and detail else f"{name}: {detail}" if detail else name
 
 
-def run_streamed(command: list[str], prompt: str, cwd: str | Path, provider: str, on_activity: Callable[[dict], None], cancel_event: threading.Event | None = None) -> subprocess.CompletedProcess:
-    """Run a CLI with prompt in cwd, report tool events, and return its result."""
+def run_streamed(command: list[str], prompt: str, cwd: str | Path, provider: str, on_activity: Callable[[dict], None], cancel_event: threading.Event | None = None, process_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """Run a CLI with prompt and environment in cwd; return its streamed result."""
     output = deque(maxlen=200)
     finished = threading.Event()
     with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stderr_file:
-        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_file, text=True, cwd=cwd, bufsize=1, start_new_session=True) as process:
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr_file, text=True, cwd=cwd, env=process_env, bufsize=1, start_new_session=True) as process:
             if cancel_event is not None:
                 def stop_when_cancelled() -> None:
                     """Stop the CLI process group when cancellation is requested; return nothing."""
