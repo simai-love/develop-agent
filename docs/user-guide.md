@@ -4,7 +4,7 @@
 
 ## 利用前の準備
 
-[README](../README.md#環境構築と起動)の手順で起動し、Agent CLI の認証とモデルの選択を済ませます。チャット欄の「CLI」で Codex と Claude Code を切り替えられます。Claude Code のモデルは「既定（CLI設定）」か Fable・Opus・Sonnet・Haiku から選びます。リポジトリには `dev` ブランチが必要です。
+[README](../README.md#環境構築と起動)の手順で起動し、Agent CLI の認証とモデルの選択を済ませます。チャット欄の「CLI」で Codex と Claude Code を切り替えられます。Claude Code のモデルは「既定（CLI設定）」か Fable・Opus・Sonnet・Haiku から選びます。各候補には CLI が現在使うバージョン（例: Opus 5.5）が表示されます。リポジトリには `dev` ブランチが必要です。
 
 ## リポジトリを選ぶ
 

@@ -4,15 +4,60 @@ import json
 import os
 import select
 import subprocess
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 
 
 CLAUDE_MODEL_ALIASES = [("fable", "Fable"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
 
 
-def claude_models(cli_path: str | None) -> list[dict[str, str]]:
-    """Return Claude Code model aliases when cli_path exists, otherwise an empty list."""
-    return [{"id": alias, "name": name} for alias, name in CLAUDE_MODEL_ALIASES] if cli_path else []
+def claude_model_name(alias: str, name: str, model_id: str) -> str:
+    """Return a display name such as "Opus 5.5" from a resolved model ID like claude-opus-5-5."""
+    prefix = f"claude-{alias}-"
+    version = [part for part in model_id.removeprefix(prefix).split("-") if len(part) < 8] if model_id.startswith(prefix) else []
+    return f"{name} {'.'.join(version)}" if version and all(part.isdigit() for part in version) else name
+
+
+def resolve_claude_model(cli_path: str, alias: str) -> str:
+    """Start cli_path with alias, read the model ID from its init event, and stop it; return "" on failure."""
+    with tempfile.TemporaryDirectory() as directory:
+        try:
+            process = subprocess.Popen(
+                [cli_path, "--print", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--model", alias],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=directory, start_new_session=True,
+            )
+        except OSError:
+            return ""
+        try:
+            process.stdin.write(b".")
+            process.stdin.close()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and select.select([process.stdout], [], [], max(0, deadline - time.monotonic()))[0]:
+                line = process.stdout.readline()
+                if not line:
+                    break
+                event = json.loads(line)
+                if event.get("type") == "system" and event.get("subtype") == "init":
+                    return str(event.get("model", ""))
+            return ""
+        except (BrokenPipeError, OSError, ValueError):
+            return ""
+        finally:
+            process.kill()
+            process.wait()
+            process.stdout.close()
+
+
+@lru_cache
+def claude_models(cli_path: str | None) -> tuple[dict[str, str], ...]:
+    """Return Claude Code aliases with resolved versions in their names, or nothing without cli_path."""
+    if not cli_path:
+        return ()
+    with ThreadPoolExecutor(len(CLAUDE_MODEL_ALIASES)) as pool:
+        model_ids = list(pool.map(lambda item: resolve_claude_model(cli_path, item[0]), CLAUDE_MODEL_ALIASES))
+    return tuple({"id": alias, "name": claude_model_name(alias, name, model_id)} for (alias, name), model_id in zip(CLAUDE_MODEL_ALIASES, model_ids))
 
 
 def codex_models(cli_path: str | None) -> list[dict[str, str]]:
