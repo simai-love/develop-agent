@@ -14,9 +14,10 @@
     <aside class="sidebar" aria-label="タスク一覧">
       <div class="brand"><span class="brand-mark">◈</span><span>DEVELOP<span class="brand-light">/AGENT</span></span></div>
       <div class="workspace-label">WORKSPACE <span class="local-badge">LOCAL</span></div>
-      <label class="repository-picker" for="repository-select">リポジトリ
+      <div class="repository-picker"><label for="repository-select">リポジトリ</label>
         <select id="repository-select" aria-label="作業するリポジトリ"></select>
-      </label>
+        <button id="add-repository" type="button" class="subtle-button">＋ リポジトリを登録</button>
+      </div>
       <div class="sidebar-head"><h2>タスク</h2><button id="add-root" class="icon-button" title="新しいタスク" aria-label="新しいタスク">＋</button></div>
       <nav id="task-tree" class="task-tree" aria-label="開発項目"></nav>
       <div class="sidebar-bottom"><span class="live-dot"></span> Local workspace <small>データはこの端末に保存</small></div>
@@ -60,6 +61,7 @@
   </div>
 
   <dialog id="create-dialog"><form id="create-form"><div class="dialog-eyebrow">NEW TASK</div><h2 id="dialog-title">タスクを作成</h2><p id="dialog-description"></p><label for="new-title" id="new-title-label">タスク名</label><input id="new-title" name="title" maxlength="120" required><div class="dialog-actions"><button type="button" id="cancel-create" class="subtle-button">キャンセル</button><button class="primary-button" type="submit">作成する <span>→</span></button></div></form></dialog>
+  <dialog id="repository-dialog"><form id="repository-form"><div class="dialog-eyebrow">REGISTER REPOSITORY</div><h2>リポジトリを登録</h2><label for="repository-name">表示名</label><input id="repository-name" name="name" required><label for="repository-path">Git リポジトリの絶対パス</label><input id="repository-path" name="path" required><label class="repository-gpu-option"><input id="repository-gpu" type="checkbox"> WSL の GPU と HPC SDK を使う</label><div class="dialog-actions"><button type="button" id="cancel-repository" class="subtle-button">キャンセル</button><button class="primary-button" type="submit">登録する <span>→</span></button></div></form></dialog>
   <dialog id="rename-dialog"><form id="rename-form"><div class="dialog-eyebrow">RENAME DEVELOPMENT ITEM</div><h2 id="rename-dialog-title">開発項目の名前を変更</h2><label for="rename-title">新しい名前</label><input id="rename-title" name="title" maxlength="120" required><div class="dialog-actions"><button type="button" id="cancel-rename" class="subtle-button">キャンセル</button><button class="primary-button" type="submit">保存する <span>→</span></button></div></form></dialog>
   <dialog id="delete-dialog"><div class="dialog-eyebrow">DELETE DEVELOPMENT ITEM</div><h2>開発項目を削除しますか？</h2><p id="delete-description"></p><p class="delete-warning">計画、チャット、検証レポート、資料も削除されます。この操作は取り消せません。開発コードは削除されません。</p><div class="dialog-actions"><button type="button" id="cancel-delete" class="subtle-button">キャンセル</button><button type="button" id="confirm-delete" class="danger-button">削除する</button></div></dialog>
   <dialog id="execute-dialog"><div class="dialog-eyebrow">START IMPLEMENTATION</div><h2>実装に進みますか？</h2><p>保存済みの計画に従ってAgentがコードを変更し、そのまま検証結果を記録します。完了まで少し時間がかかる場合があります。</p><label for="execute-instruction">今回の実装への追加指示（任意）</label><textarea id="execute-instruction" rows="4" placeholder="例：既存の公開 API との互換性を確認してください"></textarea><div class="dialog-actions"><button type="button" id="cancel-execute" class="subtle-button">キャンセル</button><button type="button" id="confirm-execute" class="primary-button">実装に進む <span>↗</span></button></div></dialog>

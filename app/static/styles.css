@@ -95,6 +95,16 @@ button:disabled {
   border:1px solid #405243;
   border-radius:6px
 }
+.repository-picker button {
+  justify-self:start;
+  padding:3px 0;
+  font-size:11px
+}
+.repository-gpu-option {
+  display:flex;
+  align-items:center;
+  gap:8px
+}
 .sidebar-head {
   display:flex;
   align-items:center;

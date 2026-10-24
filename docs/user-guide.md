@@ -8,9 +8,9 @@
 
 ## リポジトリを選ぶ
 
-画面左の「リポジトリ」で `Develop Agent` と `GPU Solver` を切り替えられます。選択先のタスク一覧、計画、レポート、資料、作業ブランチが表示されます。GPU 側のタスク記録は `gpu_solver/tasks/` に保存されたままで、複製されません。選択はブラウザに保存され、次回も引き継がれます。
+画面左の「リポジトリ」で `Develop Agent` と `GPU Solver` を切り替えられます。選択先のタスク一覧、計画、レポート、資料、作業ブランチが表示されます。`Develop Agent` の既存タスクはこのアプリの `tasks/<id>/` に、追加リポジトリのタスクは `tasks/<リポジトリID>/<id>/` に保存します。コード変更と Git 操作は選択先のリポジトリで行います。選択はブラウザに保存され、次回も引き継がれます。
 
-別の端末で GPU リポジトリを登録するには、`.codex/repositories.local.json` を次の内容で作り、`path` をその端末の Git リポジトリの絶対パスに変えてください。この設定ファイルは Git 管理されません。
+新しい作業先は「＋ リポジトリを登録」で表示名と Git リポジトリの絶対パスを入力します。登録先には `dev` ブランチが必要です。WSL の GPU と HPC SDK を Agent で使う場合はチェックを付けてください。登録内容は Git 管理外の `.codex/repositories.local.json` に保存されます。別の端末で手動登録する場合は、次の内容で作り、`path` をその端末の絶対パスに変えてください。
 
 ```json
 [{"id":"gpu_solver","name":"GPU Solver","path":"/home/kosuke/prog/gpu_solver","gpu":true}]
@@ -48,4 +48,4 @@
 
 ## 保存先と制約
 
-各タスクの計画は `tasks/<id>/plan.md`、レポートは `reports/`、画像などは `evidence/`、会話は `chat_plan.json` と `chat_result.json` に保存されます。`tasks/` は Git 管理されません。Git の変更があるタスクや実行中のタスクは削除できません。詳細は[開発・システム設計ガイド](development-guide.md)を参照してください。
+各タスクの計画はタスクフォルダ内の `plan.md`、レポートは `reports/`、画像などは `evidence/`、会話は `chat_plan.json` と `chat_result.json` に保存されます。タスクフォルダはこのアプリの `tasks/` にあり、追加リポジトリではその中のリポジトリ名のフォルダに分かれます。`tasks/` は Git 管理されません。Git の変更があるタスクや実行中のタスクは削除できません。詳細は[開発・システム設計ガイド](development-guide.md)を参照してください。

@@ -2,13 +2,19 @@
 
 import json
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from app.agent import AgentManager
+from app.storage import write_text
 from app.task_workflow import TaskWorkflowService
+
+
+REPOSITORY_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 @dataclass
@@ -25,10 +31,11 @@ class RepositoryContext:
 class RepositoryRegistry:
     """Create a registry from local settings and return repository services."""
 
-    def __init__(self, config_path: Path, cli_path: str | None):
-        """Store a config path and shared CLI path; return an empty registry."""
+    def __init__(self, config_path: Path, cli_path: str | None, tasks_root: Path):
+        """Store config, CLI, and central task paths; return an empty registry."""
         self.config_path = config_path
         self.cli_path = cli_path
+        self.tasks_root = tasks_root
         self.contexts: dict[str, RepositoryContext] = {}
         self.lock = threading.RLock()
 
@@ -44,6 +51,8 @@ class RepositoryRegistry:
     def get(self, repository_id: str) -> RepositoryContext:
         """Resolve repository_id and return its initialized task services."""
         with self.lock:
+            if not REPOSITORY_ID.fullmatch(repository_id) or repository_id == "develop-agent":
+                raise ValueError("無効なリポジトリ ID です")
             entry = next((item for item in self.entries() if item.get("id") == repository_id), None)
             if entry is None:
                 raise ValueError("登録されていないリポジトリです")
@@ -56,7 +65,7 @@ class RepositoryRegistry:
             result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True)
             if result.returncode or Path(result.stdout.strip()).resolve() != root:
                 raise ValueError("登録先は Git リポジトリのルートを指定してください")
-            tasks_root = root / "tasks"
+            tasks_root = self.tasks_root / repository_id
             projects_root = root / "projects"
             workflow = TaskWorkflowService(root, tasks_root, projects_root)
             sandbox = os.environ.get("DEVELOP_AGENT_CODEX_SANDBOX", "danger-full-access" if entry.get("gpu") and Path("/dev/dxg").exists() else "workspace-write")
@@ -66,6 +75,33 @@ class RepositoryRegistry:
             context = RepositoryContext(entry["name"], root, tasks_root, workflow, agent)
             self.contexts[repository_id] = context
             return context
+
+    def add(self, name: str, path: str, gpu: bool = False) -> dict:
+        """Register a Git root from name, path, and GPU flag; return its entry."""
+        if not isinstance(name, str) or not name.strip() or not isinstance(path, str) or not path.strip() or not isinstance(gpu, bool):
+            raise ValueError("名前とリポジトリの場所を指定してください")
+        root = Path(path).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError("リポジトリの場所が見つかりません")
+        if root == self.tasks_root.parent.resolve():
+            raise ValueError("このアプリのリポジトリは登録済みです")
+        result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True)
+        if result.returncode or Path(result.stdout.strip()).resolve() != root:
+            raise ValueError("Git リポジトリのルートを指定してください")
+        dev = subprocess.run(["git", "show-ref", "--verify", "refs/heads/dev"], cwd=root, capture_output=True)
+        if dev.returncode:
+            raise ValueError("リポジトリに dev ブランチが必要です")
+        with self.lock:
+            entries = self.entries()
+            if any(Path(item["path"]).expanduser().resolve() == root for item in entries):
+                raise ValueError("このリポジトリは登録済みです")
+            slug = re.sub(r"[^a-z0-9_-]+", "-", root.name.lower()).strip("-_")[:40] or "repo"
+            if not slug[0].isalpha():
+                slug = f"repo-{slug}"
+            repository_id = slug if slug != "develop-agent" and all(item["id"] != slug for item in entries) else f"repo-{uuid4().hex[:8]}"
+            entry = {"id": repository_id, "name": name.strip(), "path": str(root), "gpu": gpu}
+            write_text(self.config_path, json.dumps([*entries, entry], ensure_ascii=False, indent=2) + "\n")
+            return entry
 
     @staticmethod
     def _gpu_environment() -> dict[str, str]:

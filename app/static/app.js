@@ -845,6 +845,21 @@ function bindEvents() {
     try { await switchRepository(event.target.value); }
     catch (error) { event.target.value = previous; await switchRepository(previous); toast(error.message); }
   });
+  $('#add-repository').addEventListener('click', () => {
+    if (hasChanges() && !window.confirm('未保存の変更を破棄してリポジトリを登録しますか？')) return;
+    $('#repository-dialog').showModal();
+  });
+  $('#cancel-repository').addEventListener('click', () => $('#repository-dialog').close());
+  $('#repository-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const entry = await api('/api/repositories', { method: 'POST', body: JSON.stringify({ name: $('#repository-name').value, path: $('#repository-path').value, gpu: $('#repository-gpu').checked }) });
+      $('#repository-select').add(new Option(entry.name, entry.id));
+      $('#repository-dialog').close();
+      $('#repository-form').reset();
+      await switchRepository(entry.id);
+    } catch (error) { toast(error.message); }
+  });
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
   $('#home-button').addEventListener('click', () => {
