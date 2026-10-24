@@ -79,6 +79,8 @@ def run_streamed(command: list[str], prompt: str, cwd: str | Path, provider: str
                         event = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(event, dict):
+                        continue
                     for activity in tool_activity(event, provider):
                         on_activity(activity)
                 process.wait()

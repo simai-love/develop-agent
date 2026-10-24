@@ -10,7 +10,7 @@
 
 `test_chat_images.py` はチャット画像の検証、履歴保存、Codex・Claude Codeへの受け渡しを確認します。
 
-`test_claude_command.py` はClaude Codeの権限・サンドボックス・追加ディレクトリの指定、モデル別名とバージョン表示、エラー応答の読み取りを確認します。
+`test_claude_command.py` はClaude Codeの権限・サンドボックス・追加ディレクトリの指定、モデル別名とバージョン表示、エラー応答の読み取りと形式外応答の診断保存を確認します。
 
 `test_project_api.py` は `~/prog` 相当の候補検索APIと、登録済みリポジトリごとのタスク操作を確認します。
 

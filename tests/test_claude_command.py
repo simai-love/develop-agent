@@ -1,11 +1,13 @@
 """Check Claude Code command options, model aliases, and error events."""
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.agent import SKILL_ROOT, claude_command, cli_error
+from app.claude_response import read_claude_response
 from app.model_catalog import claude_model_name, claude_models
 
 
@@ -40,6 +42,25 @@ class ClaudeCommandTests(unittest.TestCase):
         events = json.dumps({"type": "result", "subtype": "error_during_execution", "is_error": True, "errors": ["sandbox unavailable"]})
         self.assertEqual(cli_error(events), "sandbox unavailable")
         self.assertIsNone(cli_error(json.dumps({"type": "result", "is_error": True})))
+        self.assertIsNone(cli_error('"ordinary text"'))
+
+    def test_response_uses_structured_output_or_valid_json_result(self):
+        """Return after accepting both supported final response shapes."""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "diagnostic.json"
+            for payload in ({"structured_output": {"message": "成功"}}, {"result": '{"message":"成功"}'}):
+                result = subprocess.CompletedProcess([], 0, json.dumps({"type": "result", **payload}), "")
+                self.assertEqual(read_claude_response(result, path), {"message": "成功"})
+            self.assertFalse(path.exists())
+
+    def test_plain_text_result_has_clear_error_and_diagnostic(self):
+        """Save a non-JSON response and explain how to continue after failure."""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "diagnostic.json"
+            result = subprocess.CompletedProcess([], 0, json.dumps({"type": "result", "result": "検証を終えました"}, ensure_ascii=False), "")
+            with self.assertRaisesRegex(RuntimeError, "指定形式のJSON応答がありません"):
+                read_claude_response(result, path)
+            self.assertIn("検証を終えました", json.loads(path.read_text(encoding="utf-8"))["stdout_tail"])
 
     def test_aliases_show_resolved_versions(self):
         """Return after checking versions read from a mock CLI's init event."""

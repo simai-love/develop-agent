@@ -11,7 +11,7 @@
 | `app/static/` | タスク一覧、計画、チャット、レポートの画面 |
 | `app/task_workflow.py` | タスク専用ブランチ、完了、統合、既存記録の移行 |
 | `app/git/workspace.py` | Git のブランチ、worktree、差分、コミット、`--no-ff` マージ |
-| `app/agent.py`・`app/agent_stream.py` | CLI の起動、進捗表示、中断、応答の検証 |
+| `app/agent.py`・`app/agent_stream.py`・`app/claude_response.py` | CLI の起動、進捗表示、中断、応答の検証 |
 | `app/storage.py`・`app/evidence.py` | タスクと検証資料の保存 |
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
 
@@ -35,9 +35,11 @@
 
 Agent の入力には会話の直近分、過去レポートの抜粋、最近の資料名を渡します。全文と原本は保存先を示し、必要なものだけ開くよう指示します。これにより、画像や過去レポートが増えても初期入力が無制限に膨らみません。画面の資料画像は遅延読み込みし、サーバーは大きな資料を順次配信します。
 
+Claude Code の最終イベントでは `structured_output` を優先し、なければ `result` の JSON 文字列を読み込みます。有効な JSON オブジェクトが得られない場合は、原因と再実行前に変更を確認する案内をチャットに表示します。CLI 出力の末尾と標準エラーは `tasks/<タスクID>/diagnostics/claude-<実行ID>.json` に保存します。追加リポジトリのタスクでは `tasks/<リポジトリID>/<タスクID>/diagnostics/` に保存します。
+
 01・02 のチャット画像は既存の資料 API で `evidence/` に保存し、`chat_plan.json` または `chat_result.json` の該当ユーザーメッセージにファイル名を記録します。送信時には同じタスクの画像か検証し、最大4枚・各10 MBを適用します。Codex CLI には現在の依頼に付いた画像を `--image` で渡します。Claude Code CLI には保存先を会話に示し、Read ツールで開くよう指示します。
 
-Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、応答の `structured_output` を Codex の最終応答と同じ JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。表示名のバージョン（例: Opus 5.5）は、サーバーが初回に各別名で CLI を起動し、`init` イベントの解決済みモデル ID から作ります。結果はサーバーの再起動まで保持し、タスクには別名を保存するため新しいバージョンにも追従します。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
+Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、最終応答を Codex と同じ形式の JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。表示名のバージョン（例: Opus 5.5）は、サーバーが初回に各別名で CLI を起動し、`init` イベントの解決済みモデル ID から作ります。結果はサーバーの再起動まで保持し、タスクには別名を保存するため新しいバージョンにも追従します。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
 
 ## Markdown と数式
 
