@@ -9,6 +9,57 @@ const state = { repository: 'develop-agent', tasks: [], task: null, tab: 'plan',
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
 let parallelSelection = { parentId: null, ids: new Set() };
+let chatImages = [];
+let sendingChat = false;
+const chatImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const maxChatImageBytes = 10 * 1024 * 1024;
+
+function renderChatAttachments() {
+  /** Render staged image previews and remove controls; return nothing. */
+  const container = $('#chat-attachments');
+  container.replaceChildren(...chatImages.map((item, index) => {
+    const preview = document.createElement('div');
+    preview.className = 'chat-attachment';
+    const image = document.createElement('img');
+    image.src = item.url;
+    image.alt = item.file.name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.disabled = sendingChat;
+    remove.setAttribute('aria-label', `${item.file.name}を削除`);
+    remove.addEventListener('click', () => {
+      URL.revokeObjectURL(item.url);
+      chatImages.splice(index, 1);
+      renderChatAttachments();
+    });
+    preview.append(image, remove);
+    return preview;
+  }));
+  container.classList.toggle('hidden', !chatImages.length);
+}
+
+function clearChatImages() {
+  /** Release staged image URLs and clear the attachment preview; return nothing. */
+  chatImages.forEach((item) => URL.revokeObjectURL(item.url));
+  chatImages = [];
+  $('#chat-image-input').value = '';
+  renderChatAttachments();
+}
+
+function addChatImages(files) {
+  /** Stage valid image files for the current message; return nothing. */
+  if (sendingChat) return;
+  for (const file of files) {
+    if (!chatImageTypes.has(file.type)) { toast('PNG、JPEG、WebP、GIF画像を選択してください'); continue; }
+    if (file.size > maxChatImageBytes || !file.size) { toast('画像は1枚10 MB以下にしてください'); continue; }
+    if (chatImages.length >= 4) { toast('画像は4枚まで添付できます'); break; }
+    const suffix = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[file.type];
+    const named = /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? file : new File([file], `pasted-${Date.now()}.${suffix}`, { type: file.type });
+    chatImages.push({ file: named, url: URL.createObjectURL(named), uploadedName: null });
+  }
+  renderChatAttachments();
+}
 
 function renderParallelChildren() {
   /** Render selectable ready children of the current parent; return nothing. */
@@ -594,8 +645,25 @@ function renderChat() {
     heading.textContent = message.role === 'user' ? 'YOU' : message.role === 'assistant' ? `${message.provider === 'claude' ? 'CLAUDE' : 'CODEX'}${message.model ? ` / ${message.model}` : ''}` : 'SYSTEM';
     const content = document.createElement('div');
     content.className = 'chat-message-content';
-    content.append(renderMarkdown(message.content, state.task.id));
+    if (message.content) content.append(renderMarkdown(message.content, state.task.id));
     card.append(heading, content);
+    if (message.images?.length) {
+      const gallery = document.createElement('div');
+      gallery.className = 'chat-message-images';
+      for (const name of message.images) {
+        const link = document.createElement('a');
+        link.href = repositoryUrl(`/api/tasks/${state.task.id}/evidence/${encodeURIComponent(name)}`);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        const image = document.createElement('img');
+        image.src = link.href;
+        image.alt = name;
+        image.loading = 'lazy';
+        link.append(image);
+        gallery.append(link);
+      }
+      card.append(gallery);
+    }
     if (message.role === 'assistant') {
       if (state.tab === 'plan' && message === latestAssistant && message.questions?.length) {
         const form = document.createElement('form');
@@ -660,9 +728,11 @@ function renderChat() {
     container.append(card);
   }
   container.scrollTop = container.scrollHeight;
-  const canChat = agentAvailable() && modelSelected() && !busy && state.task.status !== 'completed' && (state.tab === 'plan' || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length)));
+  const canChat = agentAvailable() && modelSelected() && !busy && !sendingChat && state.task.status !== 'completed' && (state.tab === 'plan' || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length)));
   $('#chat-input').disabled = !canChat;
   $('#chat-send').disabled = !canChat;
+  $('#chat-image-input').disabled = !canChat;
+  $('#chat-image-input').parentElement.classList.toggle('disabled', !canChat);
   $('#agent-dot').classList.toggle('available', agentAvailable());
 }
 
@@ -690,17 +760,35 @@ async function loadEvidence() {
 }
 
 async function sendChat(message) {
-  /** Send a phase message to the Agent and start polling; return nothing. */
+  /** Upload staged images, send one chat message, and start polling; return nothing. */
+  if (sendingChat) return;
   if (!modelSelected()) { toast('先にCodexのモデルを選択してください'); return; }
+  sendingChat = true;
+  const taskId = state.task.id;
+  const phase = state.tab;
+  const repository = state.repository;
+  renderChat();
+  renderChatAttachments();
   try {
     await savePendingDrafts();
-    const run = await api(`/api/tasks/${state.task.id}/chat`, {
-      method: 'POST', body: JSON.stringify({ phase: state.tab, message }),
-    });
+    for (const item of chatImages) {
+      if (item.uploadedName) continue;
+      const response = await fetch(repositoryUrl(`/api/tasks/${taskId}/evidence?name=${encodeURIComponent(item.file.name)}`, repository), { method: 'POST', body: item.file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '画像を保存できませんでした');
+      item.uploadedName = result.name;
+    }
+    if (state.task?.id !== taskId || state.tab !== phase || state.repository !== repository) return;
+    const run = await api(`/api/tasks/${taskId}/chat`, {
+      method: 'POST', body: JSON.stringify({ phase, message, images: chatImages.map((item) => item.uploadedName) }),
+    }, repository);
     $('#chat-input').value = '';
+    clearChatImages();
     await loadChat();
+    await loadEvidence();
     watchRun(run);
   } catch (error) { toast(error.message); }
+  finally { sendingChat = false; renderChatAttachments(); if (state.task) renderChat(); }
 }
 
 async function pollRun(runId, taskId, repository) {
@@ -763,6 +851,7 @@ async function refreshTasks() {
 async function selectTask(id) {
   /** Load task ID after checking unsaved edits; return nothing. */
   if (hasChanges() && !window.confirm('未保存の変更を破棄して移動しますか？')) return;
+  clearChatImages();
   state.task = await api(`/api/tasks/${id}`);
   state.drafts = { plan: state.task.plan, result: state.task.result };
   state.tab = 'plan';
@@ -943,8 +1032,8 @@ function bindEvents() {
       toast(state.parentId ? '子タスクを作成しました' : 'タスクを作成しました');
     } catch (error) { toast(error.message); }
   });
-  $('#tab-plan').addEventListener('click', () => { state.tab = 'plan'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });
-  $('#tab-result').addEventListener('click', () => { state.tab = 'result'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });
+  $('#tab-plan').addEventListener('click', () => { clearChatImages(); state.tab = 'plan'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });
+  $('#tab-result').addEventListener('click', () => { clearChatImages(); state.tab = 'result'; state.messages = []; render(); loadChat().catch((error) => toast(error.message)); });
   $('#plan-mode-toggle').addEventListener('click', () => {
     state.planEditing = !state.planEditing;
     render();
@@ -953,8 +1042,18 @@ function bindEvents() {
   $('#chat-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const message = $('#chat-input').value.trim();
-    if (!message) return;
+    if (!message && !chatImages.length) return;
     await sendChat(message);
+  });
+  $('#chat-image-input').addEventListener('change', (event) => {
+    addChatImages(event.target.files);
+    event.target.value = '';
+  });
+  $('#chat-input').addEventListener('paste', (event) => {
+    const images = [...event.clipboardData.files].filter((file) => file.type.startsWith('image/'));
+    if (!images.length) return;
+    event.preventDefault();
+    addChatImages(images);
   });
   $('#markdown-editor').addEventListener('input', (event) => {
     state.drafts.plan = event.target.value;
@@ -1115,6 +1214,7 @@ async function switchRepository(repository) {
   /** Load repository's task and Agent state into the view; return nothing. */
   const agent = await api('/api/agent', {}, repository);
   const tasks = await api('/api/tasks', {}, repository);
+  clearChatImages();
   state.repository = repository;
   setEvidenceRepository(repository);
   window.localStorage.setItem('develop-agent.repository', repository);

@@ -242,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(201, self.present_task(self.workflow.create_root_task(body["title"])))
             elif path.endswith("/chat"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
-                self.send_json(202, self.agent.start_chat(task_id, body["phase"], body["message"]))
+                self.send_json(202, self.agent.start_chat(task_id, body["phase"], body.get("message", ""), body.get("images", [])))
             elif path.endswith("/complete"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/complete")
                 if task_id in self.agent.active_tasks:

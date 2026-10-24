@@ -9,6 +9,8 @@ from app.storage import task_dir
 
 
 MAX_EVIDENCE_BYTES = 100 * 1024 * 1024
+MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_CHAT_IMAGES = 4
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".csv", ".json", ".pdf"}
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
 
@@ -46,3 +48,15 @@ def save_evidence(root: Path, task_id: str, original_name: str, content: bytes) 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     return next(entry for entry in list_evidence(root, task_id) if entry["name"] == name)
+
+
+def validate_chat_images(root: Path, task_id: str, names: object) -> list[str]:
+    """Validate image names for one task chat and return their ordered names."""
+    if not isinstance(names, list) or len(names) > MAX_CHAT_IMAGES:
+        raise ValueError("チャット画像は4枚まで添付できます")
+    if any(not isinstance(name, str) for name in names) or len(set(names)) != len(names):
+        raise ValueError("チャット画像の指定が正しくありません")
+    images = {entry["name"]: entry for entry in list_evidence(root, task_id) if entry["kind"] == "image"}
+    if any(name not in images or images[name]["size"] > MAX_CHAT_IMAGE_BYTES for name in names):
+        raise ValueError("チャット画像が見つからないか、10 MBを超えています")
+    return names
