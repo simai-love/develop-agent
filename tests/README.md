@@ -8,4 +8,6 @@
 
 `test_response_schemas.py` はCodexの厳格なJSON応答形式で必要な必須項目を確認します。
 
+`test_chat_images.py` はチャット画像の検証、履歴保存、Codex・Claude Codeへの受け渡しを確認します。
+
 Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs` で確認します。

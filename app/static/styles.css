@@ -1037,9 +1037,54 @@ button:disabled {
   border-radius:7px;
   padding:9px;
   display:flex;
-  align-items:flex-end;
-  gap:5px
+  flex-direction:column;
+  gap:7px
 }
+.chat-compose-controls {
+  display:flex;
+  align-items:flex-end;
+  gap:7px;
+  width:100%
+}
+.chat-image-button {
+  border:1px solid #526a56;
+  border-radius:5px;
+  padding:6px;
+  color:#cee0d0;
+  font-size:11px;
+  cursor:pointer
+}
+.chat-image-button.disabled {
+  opacity:.5;
+  cursor:not-allowed
+}
+.chat-attachments,.chat-message-images {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px
+}
+.chat-attachment { position:relative }
+.chat-attachment img,.chat-message-images img {
+  width:72px;
+  height:72px;
+  object-fit:cover;
+  border-radius:5px;
+  border:1px solid #526a56
+}
+.chat-attachment button {
+  position:absolute;
+  top:2px;
+  right:2px;
+  border:0;
+  border-radius:50%;
+  width:21px;
+  height:21px;
+  background:#243027;
+  color:#fff;
+  cursor:pointer
+}
+.chat-message-images { margin-top:8px }
+.chat-message-images img { width:110px; height:110px }
 .chat-compose textarea {
   height:51px;
   resize:none;
@@ -1055,11 +1100,11 @@ button:disabled {
   color:#dae7dc;
   font-size:12px;
 }
-.chat-compose button:enabled {
+#chat-send:enabled {
   background:#83c88a;
   color:#17311b;
 }
-.chat-compose button {
+#chat-send {
   background:#3b4b3d;
   color:#879a89;
   border:0;

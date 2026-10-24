@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_stream import run_streamed
-from app.evidence import list_evidence
+from app.evidence import list_evidence, validate_chat_images
 from app.model_catalog import codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
@@ -92,8 +92,8 @@ class AgentManager:
             if task.get("implementation", {}).get("state") == "running":
                 set_implementation(self.tasks_root, task["id"], "failed", validation_outcome="inconclusive", needs_followup=True)
 
-    def start_chat(self, task_id: str, phase: str, message: str) -> dict:
-        """Start a task-local chat for task ID and phase; return its run record."""
+    def start_chat(self, task_id: str, phase: str, message: str, images: object = None) -> dict:
+        """Start a task chat with text and image names; return its run record."""
         task = read_task(self.tasks_root, task_id)
         if task["status"] == "completed":
             raise ValueError("Completed tasks cannot be edited")
@@ -103,9 +103,10 @@ class AgentManager:
             raise ValueError("親タスクでは子タスクの総括を実行してください")
         if phase == "result" and not task["implementation"].get("changed_files"):
             raise ValueError("Result chat starts after the first implementation")
-        if not isinstance(message, str) or not message.strip():
+        image_names = validate_chat_images(self.tasks_root, task_id, images if images is not None else [])
+        if not isinstance(message, str) or not (message.strip() or image_names):
             raise ValueError("Message is required")
-        return self._start(task_id, "chat", phase, message.strip())
+        return self._start(task_id, "chat", phase, message.strip(), images=image_names)
 
     def start_implementation(self, task_id: str, additional_instruction: str = "") -> dict:
         """Start a planned task with an optional one-run instruction; return its run."""
@@ -259,7 +260,7 @@ class AgentManager:
                 entries.append({"id": activity_id, "label": str(activity["label"])[:800], "state": activity["state"]})
                 del entries[:-12]
 
-    def _start(self, task_id: str, kind: str, phase: str, message: str, additional_instruction: str = "") -> dict:
+    def _start(self, task_id: str, kind: str, phase: str, message: str, additional_instruction: str = "", images: list[str] | None = None) -> dict:
         """Register one task run and start its worker; return the run record."""
         if not isinstance(additional_instruction, str):
             raise ValueError("追加指示は文字列で入力してください")
@@ -279,13 +280,13 @@ class AgentManager:
             if writes_code and self.workflow:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "activity": [], "cancel_requested": False, "cancelable": True}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "images": images or [], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
             set_run_cancelled(self.tasks_root, task_id, False)
         if kind == "chat":
-            append_chat(self.tasks_root, task_id, phase, "user", message)
+            append_chat(self.tasks_root, task_id, phase, "user", message, images=images or [])
             if phase == "plan":
                 set_readiness(self.tasks_root, task_id, False, "", "Agentが要件を再確認しています")
         if writes_code:
@@ -326,16 +327,21 @@ class AgentManager:
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--output-schema", str(schema_path)]
-                if kind == "chat" and phase == "result":
-                    images = [entry for entry in list_evidence(self.tasks_root, task_id) if entry["kind"] == "image"][-4:]
-                    if images:
-                        command += ["--image", *(str(task_path / "evidence" / entry["name"]) for entry in images)]
+                if kind == "chat":
+                    image_names = list(run["images"])
+                    if phase == "result":
+                        recent = [entry["name"] for entry in list_evidence(self.tasks_root, task_id) if entry["kind"] == "image"][-4:]
+                        image_names += [name for name in recent if name not in image_names]
+                    if image_names:
+                        command += ["--image", *(str(task_path / "evidence" / name) for name in image_names)]
                 command += ["--sandbox", self.codex_sandbox]
                 if self.codex_sandbox == "workspace-write":
                     command += ["--config", "sandbox_workspace_write.network_access=true"]
                 command += ["-"]
             else:
                 command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
+                if writes_code:
+                    command += ["--add-dir", str(task_path)]
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
@@ -456,7 +462,11 @@ class AgentManager:
         """Build a task-local prompt from a task ID and phase; return text."""
         task = read_task(self.tasks_root, task_id)
         history = read_chat(self.tasks_root, task_id, phase)[-12:]
-        conversation = "\n".join(f"{item['role']}: {prompt_excerpt(item['content'], 1500)}" for item in history)
+        conversation = "\n".join(
+            f"{item['role']}: {prompt_excerpt(item['content'], 1500)}"
+            + (f"\n添付画像: {', '.join(str(task_dir(self.tasks_root, task_id) / 'evidence' / name) for name in item['images'])}" if item.get("images") else "")
+            for item in history
+        )
         evidence = list_evidence(self.tasks_root, task_id) if phase == "result" else []
         recent_evidence = evidence[-20:]
         if phase == "plan":
@@ -481,6 +491,7 @@ class AgentManager:
             f"レポート全文: {task_dir(self.tasks_root, task_id) / task['reports'][-1]['file'] if task['reports'] else 'なし'}\n"
             f"検証資料フォルダ: {task_dir(self.tasks_root, task_id) / 'evidence'}\n"
             f"検証資料: 全{len(evidence)}件、最近の{len(recent_evidence)}件: {json.dumps(recent_evidence, ensure_ascii=False)}。必要なファイルだけ開いてください。\n"
+            "最新のユーザー発言に添付画像があれば、その画像を実際に確認してから回答してください。Claude CodeではReadツールで画像ファイルを開いてください。\n"
             f"この画面の会話:\n{conversation}"
         )
 
