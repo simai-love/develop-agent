@@ -15,6 +15,8 @@
 | `app/storage.py`・`app/evidence.py` | タスクと検証資料の保存 |
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
 
+リポジトリ登録画面の候補は `/api/repository-candidates` から取得します。`~/prog` 直下のGitルートのうち、ローカルの `dev` ブランチを持ち、まだ登録されていないものだけを返します。手入力での登録も従来どおり可能です。
+
 ## タスクと Git
 
 `POST /api/repositories` は Git ルートと `dev` ブランチを確認し、新しい作業先を登録します。

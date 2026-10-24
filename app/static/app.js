@@ -206,8 +206,23 @@ function modelSelected() {
 
 function repositoryUrl(path, repository = state.repository) {
   /** Add repository to the API path and return its selected URL. */
-  if (path === '/api/repositories') return path;
+  if (path === '/api/repositories' || path === '/api/repository-candidates') return path;
   return `${path}${path.includes('?') ? '&' : '?'}repo=${encodeURIComponent(repository)}`;
+}
+
+async function loadRepositoryCandidates() {
+  /** Fill the registration picker from Git roots under ~/prog; return nothing. */
+  const select = $('#repository-candidate');
+  select.replaceChildren(new Option('選択してください', ''), new Option('その他の場所を入力', '__manual__'));
+  const entries = await api('/api/repository-candidates');
+  select.replaceChildren(new Option('選択してください', ''));
+  for (const entry of entries) {
+    const option = new Option(`${entry.name} — ${entry.path}`, entry.path);
+    option.dataset.name = entry.name;
+    select.add(option);
+  }
+  select.add(new Option('その他の場所を入力', '__manual__'));
+  select.value = '';
 }
 
 async function api(path, options = {}, repository = state.repository) {
@@ -934,11 +949,23 @@ function bindEvents() {
     try { await switchRepository(event.target.value); }
     catch (error) { event.target.value = previous; await switchRepository(previous); toast(error.message); }
   });
-  $('#add-repository').addEventListener('click', () => {
+  $('#add-repository').addEventListener('click', async () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してリポジトリを登録しますか？')) return;
+    $('#repository-form').reset();
+    $('#repository-custom-path').classList.add('hidden');
+    $('#repository-path').required = false;
+    try { await loadRepositoryCandidates(); }
+    catch (error) { toast(error.message); }
     $('#repository-dialog').showModal();
   });
   $('#cancel-repository').addEventListener('click', () => $('#repository-dialog').close());
+  $('#repository-candidate').addEventListener('change', (event) => {
+    const manual = event.target.value === '__manual__';
+    $('#repository-custom-path').classList.toggle('hidden', !manual);
+    $('#repository-path').required = manual;
+    $('#repository-path').value = manual ? '' : event.target.value;
+    $('#repository-name').value = manual ? '' : event.target.selectedOptions[0]?.dataset.name || '';
+  });
   $('#repository-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -946,6 +973,8 @@ function bindEvents() {
       $('#repository-select').add(new Option(entry.name, entry.id));
       $('#repository-dialog').close();
       $('#repository-form').reset();
+      $('#repository-custom-path').classList.add('hidden');
+      $('#repository-path').required = false;
       await switchRepository(entry.id);
     } catch (error) { toast(error.message); }
   });

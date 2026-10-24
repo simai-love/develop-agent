@@ -1141,7 +1141,7 @@ dialog label {
   color:#c6d8c7;
   margin-bottom:9px
 }
-dialog input,dialog textarea {
+dialog input,dialog textarea,dialog select {
   width:100%;
   border:1px solid #506251;
   border-radius:6px;
@@ -1151,9 +1151,12 @@ dialog input,dialog textarea {
   font-size:12px;
   outline:0
 }
-dialog input:focus,dialog textarea:focus {
+dialog input:focus,dialog textarea:focus,dialog select:focus {
   border-color:#97d79b
 }
+#repository-candidate { margin-bottom:16px }
+#repository-custom-path { margin-bottom:16px }
+.repository-gpu-option input { width:auto }
 .commit-details {
   font-size:12px;
   line-height:1.6;

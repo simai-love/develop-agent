@@ -31,11 +31,12 @@ class RepositoryContext:
 class RepositoryRegistry:
     """Create a registry from local settings and return repository services."""
 
-    def __init__(self, config_path: Path, cli_path: str | None, tasks_root: Path):
-        """Store config, CLI, and central task paths; return an empty registry."""
+    def __init__(self, config_path: Path, cli_path: str | None, tasks_root: Path, discovery_root: Path | None = None):
+        """Store config, CLI, task, and discovery paths; return an empty registry."""
         self.config_path = config_path
         self.cli_path = cli_path
         self.tasks_root = tasks_root
+        self.discovery_root = discovery_root or Path.home() / "prog"
         self.contexts: dict[str, RepositoryContext] = {}
         self.lock = threading.RLock()
 
@@ -47,6 +48,25 @@ class RepositoryRegistry:
         if not isinstance(entries, list):
             raise ValueError("リポジトリ設定は配列で指定してください")
         return entries
+
+    def candidates(self) -> list[dict]:
+        """Return unregistered Git roots with dev under the discovery path."""
+        root = self.discovery_root.expanduser().resolve()
+        if not root.is_dir():
+            return []
+        registered = {Path(item["path"]).expanduser().resolve() for item in self.entries()}
+        registered.add(self.tasks_root.parent.resolve())
+        candidates = []
+        for directory in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+            if not directory.is_dir() or directory.resolve() in registered:
+                continue
+            git_root = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=directory, capture_output=True, text=True)
+            if git_root.returncode or Path(git_root.stdout.strip()).resolve() != directory.resolve():
+                continue
+            dev = subprocess.run(["git", "show-ref", "--verify", "refs/heads/dev"], cwd=directory, capture_output=True)
+            if not dev.returncode:
+                candidates.append({"name": directory.name.replace("_", " ").replace("-", " ").title(), "path": str(directory.resolve())})
+        return candidates
 
     def get(self, repository_id: str) -> RepositoryContext:
         """Resolve repository_id and return its initialized task services."""

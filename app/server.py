@@ -79,6 +79,12 @@ class Handler(BaseHTTPRequestHandler):
             except (KeyError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
+        if path == "/api/repository-candidates":
+            try:
+                self.send_json(200, REGISTRY.candidates())
+            except (OSError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path.startswith("/api/") and not self.load_context():
             return
         if path == "/api/agent":

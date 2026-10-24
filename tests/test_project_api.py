@@ -35,7 +35,7 @@ class TaskApiTest(unittest.TestCase):
             config.write_text(json.dumps([{"id": "sample", "name": "Sample", "path": str(repo)}]), encoding="utf-8")
             previous = server.REGISTRY
             central_tasks = Path(temporary) / "central-tasks"
-            server.REGISTRY = RepositoryRegistry(config, None, central_tasks)
+            server.REGISTRY = RepositoryRegistry(config, None, central_tasks, Path(temporary))
             http = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
             thread = threading.Thread(target=http.serve_forever, daemon=True)
             thread.start()
@@ -63,10 +63,18 @@ class TaskApiTest(unittest.TestCase):
                 (next_repo / ".gitignore").write_text("tasks/\n", encoding="utf-8")
                 subprocess.run(["git", "add", "."], cwd=next_repo, check=True)
                 subprocess.run(["git", "commit", "-q", "-m", "初期化"], cwd=next_repo, check=True)
+                main_only = Path(temporary) / "main-only"
+                main_only.mkdir()
+                subprocess.run(["git", "init", "-q", "-b", "main"], cwd=main_only, check=True)
+                with urlopen(base + "/api/repository-candidates") as response:
+                    candidates = json.load(response)
+                self.assertEqual(candidates, [{"name": "Next Repo", "path": str(next_repo)}])
                 request = Request(base + "/api/repositories", data=json.dumps({"name": "Next", "path": str(next_repo)}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     entry = json.load(response)
                 self.assertEqual(entry["id"], "next-repo")
+                with urlopen(base + "/api/repository-candidates") as response:
+                    self.assertEqual(json.load(response), [])
                 request = Request(base + "/api/tasks?repo=next-repo", data=json.dumps({"title": "追加先のタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     next_task = json.load(response)
