@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_stream import run_streamed
+from app.claude_response import read_claude_response
 from app.evidence import list_evidence, validate_chat_images
 from app.model_catalog import claude_models, codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
@@ -35,7 +36,11 @@ def cli_error(events: str) -> str | None:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(event, dict):
+            continue
         item = event.get("msg", event)
+        if not isinstance(item, dict):
+            continue
         if item.get("type") == "error":
             errors.append(item.get("message", "Codex CLI failed"))
         elif item.get("type") == "result" and item.get("is_error") and (item.get("result") or item.get("errors")):
@@ -368,17 +373,13 @@ class AgentManager:
                 raise RuntimeError("Agentの実行を中断しました")
             if run["provider"] == "codex":
                 answer = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
+                if result.returncode != 0:
+                    raise RuntimeError((cli_error(result.stdout) or result.stderr or "codex CLI failed")[-1200:])
+                if not answer:
+                    raise RuntimeError(cli_error(result.stdout) or "Agent CLI returned no response")
+                response = json.loads(answer)
             else:
-                events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-                payload = next((event for event in reversed(events) if event.get("type") == "result" or "structured_output" in event), {}) if result.returncode == 0 else {}
-                payload = {} if payload.get("is_error") else payload
-                value = payload.get("structured_output", payload.get("result"))
-                answer = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value or ""
-            if result.returncode != 0:
-                raise RuntimeError((cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed")[-1200:])
-            if not answer:
-                raise RuntimeError(cli_error(result.stdout) or "Agent CLI returned no response")
-            response = json.loads(answer)
+                response = read_claude_response(result, task_path / "diagnostics" / f"claude-{run_id}.json", cli_error(result.stdout))
             if any(not path.exists() or path.read_text(encoding="utf-8") != content for path, content in previous_reports):
                 raise RuntimeError("Agent changed a previous validation report")
             if kind == "chat" and phase == "plan" and self._change_snapshot(code_root) != before:

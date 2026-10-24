@@ -278,6 +278,32 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(task["provider"], "claude")
             self.assertEqual(manager.get_run(run["id"])["activity"], [{"id": "tool-1", "label": "git status --short", "state": "done"}])
 
+    def test_claude_plain_text_failure_appears_in_chat(self):
+        """Show a readable failure and keep CLI output for a malformed response."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._init_project(root)
+            tasks = root / "tasks"
+            cli = root / "fake-claude"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "sys.stdin.read()\n"
+                "print(json.dumps({'type': 'result', 'result': '検証を終えました'}), flush=True)\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            task = create_task(tasks, "応答確認")
+            update_task(tasks, task["id"], {"provider": "claude", "model": "sonnet"})
+            manager = AgentManager(tasks, root)
+            manager.cli_paths["claude"] = str(cli)
+            run = manager.start_chat(task["id"], "plan", "計画してください")
+            self._await_run(manager, run["id"], "failed")
+            diagnostic = tasks / task["id"] / "diagnostics" / f"claude-{run['id']}.json"
+            self.assertTrue(diagnostic.exists())
+            self.assertIn("指定形式のJSON応答がありません", read_chat(tasks, task["id"], "plan")[-1]["content"])
+            self.assertIn(str(diagnostic), manager.get_run(run["id"])["message"])
+
     def test_result_chat_can_validate_and_revise_code(self):
         """Return after checking validation, code revision, and recorded files."""
         with tempfile.TemporaryDirectory() as temporary:
