@@ -1,10 +1,18 @@
-"""Read the picker-visible model catalog from the installed Codex CLI."""
+"""Read the picker-visible model catalogs for the installed Agent CLIs."""
 
 import json
 import os
 import select
 import subprocess
 import time
+
+
+CLAUDE_MODEL_ALIASES = [("fable", "Fable"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
+
+
+def claude_models(cli_path: str | None) -> list[dict[str, str]]:
+    """Return Claude Code model aliases when cli_path exists, otherwise an empty list."""
+    return [{"id": alias, "name": name} for alias, name in CLAUDE_MODEL_ALIASES] if cli_path else []
 
 
 def codex_models(cli_path: str | None) -> list[dict[str, str]]:

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -10,11 +11,16 @@ from uuid import uuid4
 
 from app.agent_stream import run_streamed
 from app.evidence import list_evidence, validate_chat_images
-from app.model_catalog import codex_models
+from app.model_catalog import claude_models, codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent / ".codex" / "skills" / "research-workflow"
+CLAUDE_ALLOWED_DOMAINS = [
+    "github.com", "*.github.com", "*.githubusercontent.com", "pypi.org", "*.pypi.org", "*.pythonhosted.org",
+    "registry.npmjs.org", "*.npmjs.org", "huggingface.co", "*.huggingface.co", "*.hf.co", "*.pytorch.org",
+    "*.anaconda.org", "astral.sh", "*.astral.sh",
+]
 
 
 class PlanChangeNeeded(ValueError):
@@ -32,7 +38,23 @@ def cli_error(events: str) -> str | None:
         item = event.get("msg", event)
         if item.get("type") == "error":
             errors.append(item.get("message", "Codex CLI failed"))
+        elif item.get("type") == "result" and item.get("is_error") and (item.get("result") or item.get("errors")):
+            errors.append(str(item.get("result") or "; ".join(map(str, item["errors"]))))
     return errors[-1] if errors else None
+
+
+def claude_command(cli_path: str, model: str, schema_path: Path, directories: list[Path], sandbox: str) -> list[str]:
+    """Build a Claude Code print command from model, schema, extra directories, and sandbox mode."""
+    command = [cli_path, "--print", "--output-format", "stream-json", "--verbose", "--add-dir", *map(str, directories)]
+    if sandbox == "danger-full-access":
+        command += ["--dangerously-skip-permissions"]
+    else:
+        domains = CLAUDE_ALLOWED_DOMAINS + [item.strip() for item in os.environ.get("DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS", "").split(",") if item.strip()]
+        settings = {"sandbox": {"enabled": True, "failIfUnavailable": True, "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False, "network": {"allowedDomains": domains}}}
+        command += ["--permission-mode", "acceptEdits", "--settings", json.dumps(settings)]
+    if model:
+        command += ["--model", model]
+    return command + ["--json-schema", schema_path.read_text(encoding="utf-8")]
 
 
 def valid_proposals(value: object) -> bool:
@@ -75,8 +97,8 @@ class AgentManager:
         return bool(self.active_tasks.intersection({task_id, *ancestors, *task_subtree(self.tasks_root, task_id)}))
 
     def availability(self) -> dict:
-        """Return CLI availability and Codex's picker-visible model catalog."""
-        return {"provider": "codex", "available": bool(self.cli_paths["codex"]), "providers": {name: bool(path) for name, path in self.cli_paths.items()}, "models": {"codex": codex_models(self.cli_paths["codex"]), "claude": []}}
+        """Return CLI availability and each CLI's picker-visible model catalog."""
+        return {"provider": "codex", "available": bool(self.cli_paths["codex"]), "providers": {name: bool(path) for name, path in self.cli_paths.items()}, "models": {"codex": codex_models(self.cli_paths["codex"]), "claude": claude_models(self.cli_paths["claude"])}}
 
     def remove_task(self, task_id: str) -> list[str]:
         """Remove task_id and descendants unless an Agent uses them; return IDs."""
@@ -187,10 +209,7 @@ class AgentManager:
                     command += ["--model", run["model"]]
                 command += ["--output-schema", str(schema_path), "--sandbox", "workspace-write", "-"]
             else:
-                command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
-                if run["model"]:
-                    command += ["--model", run["model"]]
-                command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
+                command = claude_command(self.cli_paths["claude"], run["model"], schema_path, [task_path, common_path, SKILL_ROOT], "workspace-write")
             result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
             with self.lock:
                 self.runs[run_id]["cancelable"] = False
@@ -339,12 +358,8 @@ class AgentManager:
                     command += ["--config", "sandbox_workspace_write.network_access=true"]
                 command += ["-"]
             else:
-                command = [self.cli_paths["claude"], "--print", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]
-                if writes_code:
-                    command += ["--add-dir", str(task_path)]
-                if run["model"]:
-                    command += ["--model", run["model"]]
-                command += ["--json-schema", schema_path.read_text(encoding="utf-8")]
+                directories = [task_path] if writes_code else [code_root, *([self.tasks_root] if kind == "summary" else [])]
+                command = claude_command(self.cli_paths["claude"], run["model"], schema_path, [*directories, SKILL_ROOT], self.codex_sandbox)
             result = run_streamed(command, prompt, code_root if writes_code else task_path, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
             with self.lock:
                 self.runs[run_id]["cancelable"] = False
@@ -356,6 +371,7 @@ class AgentManager:
             else:
                 events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
                 payload = next((event for event in reversed(events) if event.get("type") == "result" or "structured_output" in event), {}) if result.returncode == 0 else {}
+                payload = {} if payload.get("is_error") else payload
                 value = payload.get("structured_output", payload.get("result"))
                 answer = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value or ""
             if result.returncode != 0:

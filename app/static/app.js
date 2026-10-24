@@ -575,7 +575,8 @@ function renderModel() {
   const select = $('#model-select');
   const choices = state.modelCatalog[state.task.provider] || [];
   select.replaceChildren();
-  if (!state.task.model) {
+  if (state.task.provider === 'claude') select.add(new Option('既定（CLI設定）', ''));
+  else if (!state.task.model) {
     const placeholder = new Option(choices.length ? 'モデルを選択' : 'モデルを取得できません', '');
     placeholder.disabled = true;
     select.add(placeholder);
@@ -587,7 +588,6 @@ function renderModel() {
   select.value = state.task.model || '';
   select.disabled = isTaskBusy(state.task) || (!choices.length && !state.task.model);
   select.title = choices.length ? 'CLIが提示するモデル候補です。利用可否はアカウント設定によります。' : 'モデル一覧を取得できません。画面を更新してください。';
-  $('#model-picker').classList.toggle('hidden', state.task.provider === 'claude');
   $('#provider-select').value = state.task.provider || 'codex';
   $('#provider-select').disabled = isTaskBusy(state.task);
   $('#provider-label').textContent = state.task.provider === 'claude' ? 'CLAUDE CODE' : 'CODEX CLI';

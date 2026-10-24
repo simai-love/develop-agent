@@ -37,6 +37,8 @@ Agent の入力には会話の直近分、過去レポートの抜粋、最近�
 
 01・02 のチャット画像は既存の資料 API で `evidence/` に保存し、`chat_plan.json` または `chat_result.json` の該当ユーザーメッセージにファイル名を記録します。送信時には同じタスクの画像か検証し、最大4枚・各10 MBを適用します。Codex CLI には現在の依頼に付いた画像を `--image` で渡します。Claude Code CLI には保存先を会話に示し、Read ツールで開くよう指示します。
 
+Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、応答の `structured_output` を Codex の最終応答と同じ JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
+
 ## Markdown と数式
 
 `app/static/markdown.mjs` は許可したリンクと画像だけを DOM（画面を構成する要素の木構造）に追加します。`../evidence/<filename>` は当該タスクの資料 API（画面からサーバーへデータを求める窓口）へ変換されます。数式は KaTeX（文字で数式を書く LaTeX 記法を画面に描くライブラリ）で描画します。文中の `$...$` と独立した `$$...$$` を扱い、HTML を直接解釈しません。KaTeX は `app/cli/package-lock.json` で固定し、`/vendor/katex/` から配信します。
