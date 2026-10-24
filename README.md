@@ -14,7 +14,7 @@ npm ci --prefix app/cli
 bash scripts/run.sh
 ```
 
-`scripts/run.sh` は `.venv` を有効化して Python 環境を再同期し、Codex CLI または数式描画ライブラリが未導入なら npm で導入してサーバーを起動します。ブラウザで `http://127.0.0.1:8765` を開いてください。Agent のチャットと実装には、選んだ CLI の認証とモデルの利用権限が必要です。Claude Code CLI を選ぶ場合は別途導入・認証してください。
+`scripts/run.sh` は `.venv` を有効化して Python 環境を再同期し、Codex CLI または数式描画ライブラリが未導入なら npm で導入してサーバーを起動します。ブラウザで `http://127.0.0.1:8765` を開いてください。Agent のチャットと実装には、選んだ CLI の認証とモデルの利用権限が必要です。Claude Code CLI を選ぶ場合は別途導入・認証し、Linux では Bash サンドボックス用に `bubblewrap` と `socat` を導入してください（例: `sudo apt install bubblewrap socat`）。権限の詳細は[開発・システム設計ガイド](docs/development-guide.md#画面と-agent)を参照してください。
 
 画面左の「リポジトリ」で作業先を切り替えられます。「＋ リポジトリを登録」で別の Git リポジトリも追加できます。この端末では `GPU Solver` を登録済みです。GPU Solver のアプリもここから起動し、コード作業には GPU リポジトリを使用します。GPU の既存タスク 11 件を含む記録は、このアプリの `tasks/gpu_solver/` に保存します。設定例と注意点は[利用ガイド](docs/user-guide.md#リポジトリを選ぶ)を参照してください。
 
