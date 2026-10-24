@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "message": {"type": "string"},
+    "outcome": {"type": "string", "enum": ["supported", "not_supported", "inconclusive"]},
+    "evidence_files": {"type": "array", "items": {"type": "string"}},
+    "needs_followup": {"type": "boolean"},
+    "commit_message": {"type": "string"},
+    "child_task_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "purpose": {"type": "string"},
+          "scope": {"type": "string"},
+          "verification": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["title", "purpose", "scope", "verification", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["message", "outcome", "evidence_files", "needs_followup", "commit_message", "child_task_proposals"],
+  "additionalProperties": false
+}

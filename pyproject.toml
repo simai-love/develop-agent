@@ -1,0 +1,9 @@
+[project]
+name = "develop-agent"
+version = "0.1.0"
+description = "Local GUI for research and development Agent workflows"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

@@ -1,0 +1,28 @@
+"""Describe the next action for a task in the local GUI."""
+
+
+def display_status(task: dict, plan_messages: list[dict], active: bool, children: list[dict] | None = None) -> dict:
+    """Return a display key and next step for task, run, and child inputs."""
+    if task["status"] == "completed":
+        return {"key": "completed", "label": "完了済み", "detail": "タスクは完了しています"}
+    if active or task["implementation"]["state"] == "running":
+        return {"key": "running", "label": "実行中", "detail": "Agentが作業しています"}
+    if task.get("last_run_cancelled"):
+        return {"key": "waiting", "label": "中断", "detail": "変更を確認して再実行"}
+    if task.get("commit_pending"):
+        return {"key": "waiting", "label": "確認待ち", "detail": "残りの変更を確認してコミット"}
+    if children:
+        if any(child["status"] != "completed" for child in children):
+            return {"key": "waiting", "label": "進行中", "detail": "子タスクの完了を待機"}
+        if task.get("reports") and task["reports"][-1].get("kind") == "summary":
+            return {"key": "waiting", "label": "ユーザー待ち", "detail": "総括を確認してマージ"}
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "子タスクの結果を総括"}
+    if task["status"] == "verifying":
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "検証結果を確認"}
+    if task["status"] == "ready":
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "実装を開始"}
+    if plan_messages and plan_messages[-1]["role"] == "assistant" and plan_messages[-1].get("questions"):
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "質問に回答"}
+    if plan_messages or task["plan"].strip():
+        return {"key": "waiting", "label": "ユーザー待ち", "detail": "計画を相談"}
+    return {"key": "not-started", "label": "未着手", "detail": "計画を開始"}
