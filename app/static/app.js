@@ -814,7 +814,15 @@ async function pollRun(runId, taskId, repository) {
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     if (state.repository !== repository) return;
-    const run = await api(`/api/runs/${runId}`, {}, repository);
+    let run;
+    try {
+      run = await api(`/api/runs/${runId}`, {}, repository);
+    } catch {
+      // A restarted server forgets its runs; stop tracking once the task is idle there.
+      const task = await api(`/api/tasks/${taskId}`, {}, repository).catch(() => null);
+      if (!task || task.active || task.implementation?.state === 'running') continue;
+      run = { state: 'failed', message: '実行状態を確認できなくなりました。会話と変更内容を確認してください' };
+    }
     if (state.repository !== repository) return;
     if (run.state === 'running') {
       state.activeRuns.set(taskId, run);
