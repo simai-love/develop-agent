@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from app.agent import AgentManager
-from app.storage import append_report, read_task, report_draft_path, set_implementation, set_readiness, update_task, write_text
+from app.storage import append_report, read_chat, read_task, report_draft_path, set_implementation, set_readiness, update_task, write_text
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService
 
@@ -120,6 +120,61 @@ class TaskWorkflowTest(unittest.TestCase):
         while manager.active_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertFalse(manager.active_tasks)
+
+    def run_commit(self, script: str, instruction: str) -> dict:
+        """Run a fake commit CLI script with instruction on a new task; return the finished task."""
+        cli = self.repo.parent / "fake-commit-codex"
+        cli.write_text(f"#!{sys.executable}\n{script}", encoding="utf-8")
+        cli.chmod(0o755)
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
+        self.service.agent = manager
+        task = self.service.create_root_task("完了待ち")
+        self.service.claim_code(task["id"])
+        (self.service.code_path(task["id"]) / "feature.txt").write_text("done\n", encoding="utf-8")
+        set_implementation(self.service.tasks_root, task["id"], "succeeded", ["feature.txt"])
+        write_text(report_draft_path(self.service.tasks_root, task["id"]), "# 検証\n")
+        append_report(self.service.tasks_root, task["id"], "supported", ["feature.txt"], [], "codex", "test", False)
+        manager.start_commit(task["id"], self.service.completion_preview(task["id"]), instruction)
+        deadline = time.monotonic() + 10
+        while manager.active_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return read_task(self.service.tasks_root, task["id"])
+
+    def test_commit_run_history_is_saved_to_result_chat(self):
+        """Record the commit instruction, created commits, and Agent reply in the result chat."""
+        task = self.run_commit(
+            "import json, re, subprocess, sys\n"
+            "prompt = sys.stdin.read()\n"
+            "operation = re.search(r'Task-Operation: (\\w+)', prompt).group(1)\n"
+            "subprocess.run(['git', 'add', 'feature.txt'], check=True)\n"
+            "subprocess.run(['git', 'commit', '-q', '-m', '機能を追加', '-m', f'Task-Operation: {operation}'], check=True)\n"
+            "path = sys.argv[sys.argv.index('--output-last-message') + 1]\n"
+            "open(path, 'w', encoding='utf-8').write(json.dumps({'message': '1件にまとめました'}))\n",
+            "1件にまとめる",
+        )
+        self.assertEqual(task["status"], "completed")
+        chat = read_chat(self.service.tasks_root, task["id"], "result")
+        self.assertIn("コミット方針: 1件にまとめる", chat[-2]["content"])
+        self.assertEqual(chat[-1]["role"], "system")
+        self.assertIn(task["commit_hashes"][-1][:10], chat[-1]["content"])
+        self.assertIn("1件にまとめました", chat[-1]["content"])
+        self.assertFalse((self.service.tasks_root / task["id"] / "diagnostics").exists())
+
+    def test_failed_commit_run_saves_reason_and_diagnostic(self):
+        """Record a failed commit run's reason and keep its CLI output for diagnosis."""
+        task = self.run_commit(
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'type': 'error', 'message': '認証に失敗しました'}, ensure_ascii=False))\nsys.exit(1)\n",
+            "",
+        )
+        self.assertNotEqual(task["status"], "completed")
+        chat = read_chat(self.service.tasks_root, task["id"], "result")
+        self.assertIn("コミット方針: なし", chat[-2]["content"])
+        self.assertIn("コミット作成に失敗しました: 認証に失敗しました", chat[-1]["content"])
+        self.assertIn("作成したコミット: なし", chat[-1]["content"])
+        diagnostics = list((self.service.tasks_root / task["id"] / "diagnostics").glob("commit-*.json"))
+        self.assertEqual(len(diagnostics), 1)
+        self.assertIn("認証に失敗しました", json.loads(diagnostics[0].read_text(encoding="utf-8"))["stdout_tail"])
 
     def test_existing_project_records_become_task_owned(self):
         """Keep existing task IDs and reports while assigning each task a branch."""

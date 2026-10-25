@@ -20,7 +20,7 @@ def read_claude_response(result: subprocess.CompletedProcess, diagnostic_path: P
     if result.returncode or payload is None or payload.get("is_error"):
         fallback = "Claude Codeの結果イベントがありません" if payload is None else "Claude Codeがエラーを報告しました"
         detail = cli_error or result.stderr.strip() or fallback
-        _save_diagnostic(result, diagnostic_path)
+        save_diagnostic(result, diagnostic_path)
         raise RuntimeError(f"Claude Codeの実行に失敗しました: {detail[-500:]}。診断ファイル: {diagnostic_path}")
 
     value = payload.get("structured_output")
@@ -34,14 +34,14 @@ def read_claude_response(result: subprocess.CompletedProcess, diagnostic_path: P
     if isinstance(value, dict):
         return value
 
-    _save_diagnostic(result, diagnostic_path)
+    save_diagnostic(result, diagnostic_path)
     raise RuntimeError(
         "Claude Codeは終了しましたが、指定形式のJSON応答がありません。"
         f"診断ファイル: {diagnostic_path}。作業中の変更を確認してから再実行してください。"
     )
 
 
-def _save_diagnostic(result: subprocess.CompletedProcess, path: Path) -> None:
+def save_diagnostic(result: subprocess.CompletedProcess, path: Path) -> None:
     """Save recent stdout and stderr from result to path; return nothing."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
