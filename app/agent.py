@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_stream import run_streamed
-from app.claude_response import read_claude_response
+from app.claude_response import read_claude_response, save_diagnostic
 from app.evidence import list_evidence, validate_chat_images
 from app.model_catalog import claude_models, codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
@@ -186,6 +186,7 @@ class AgentManager:
             if not self.cli_paths[task["provider"]]:
                 raise ValueError(f"{task['provider']} CLI is not installed")
             operation = self.workflow.begin_agent_commit(task_id, expected)
+            append_chat(self.tasks_root, task_id, "result", "user", f"タスク完了のコミットを指示しました。\nコミット方針: {instruction.strip() or 'なし'}")
             run_id = uuid4().hex
             run = {"id": run_id, "task_id": task_id, "kind": "commit", "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
@@ -196,11 +197,15 @@ class AgentManager:
         return dict(run)
 
     def _work_commit(self, run_id: str, operation: dict, instruction: str) -> None:
-        """Ask the Agent to split approved changes into commits and record the result."""
+        """Ask the Agent to split approved changes into commits and record the result in the result chat."""
         run = self.get_run(run_id)
         task_id = run["task_id"]
         task_path = task_dir(self.tasks_root, task_id)
         output_path = task_path / f".codex-{run_id}.txt"
+        diagnostic_path = task_path / "diagnostics" / f"commit-{run_id}.json"
+        previous_hashes = set(read_task(self.tasks_root, task_id)["commit_hashes"])
+        result = None
+        reply = ""
         error = None
         try:
             code_root = self.workflow.code_path(task_id)
@@ -220,19 +225,38 @@ class AgentManager:
                 self.runs[run_id]["cancelable"] = False
             if result.returncode:
                 error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
+            reply = self._commit_reply(run["provider"], result, output_path, diagnostic_path)
             self.workflow.reconcile_agent_commit(operation)
             outcome = {"state": "succeeded", "message": "コミットを作成し、タスクを完了しました"}
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as failure:
             detail = str(failure)
             cancelled = self.cancel_events[run_id].is_set()
             outcome = {"state": "cancelled" if cancelled else "failed", "message": "実行を中断しました。作成済みのコミットと残りの変更を確認してください。" if cancelled else f"{error}: {detail}" if error else detail}
+            if result is not None:
+                save_diagnostic(result, diagnostic_path)
         finally:
             output_path.unlink(missing_ok=True)
+        created = [commit for commit in read_task(self.tasks_root, task_id)["commit_hashes"] if commit not in previous_hashes]
+        lines = [outcome["message"] if outcome["state"] != "failed" else f"コミット作成に失敗しました: {outcome['message']}"]
+        lines.append(f"作成したコミット: {', '.join(commit[:10] for commit in created) or 'なし'}")
+        if diagnostic_path.exists():
+            lines.append(f"診断ファイル: {diagnostic_path}")
+        if reply:
+            lines.append(f"\nAgentの報告:\n{reply}")
+        append_chat(self.tasks_root, task_id, "result", "system", "\n".join(lines))
         set_run_cancelled(self.tasks_root, task_id, outcome["state"] == "cancelled")
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
             self.cancel_events.pop(run_id, None)
+
+    def _commit_reply(self, provider: str, result: subprocess.CompletedProcess, output_path: Path, diagnostic_path: Path) -> str:
+        """Return the Agent's commit summary from CLI output, or an empty string when none is readable."""
+        try:
+            response = json.loads(output_path.read_text(encoding="utf-8")) if provider == "codex" else read_claude_response(result, diagnostic_path)
+        except (OSError, RuntimeError, ValueError):
+            return ""
+        return response.get("message", "") if isinstance(response, dict) else ""
 
     def cancel_run(self, run_id: str) -> dict:
         """Request cancellation of a running CLI by run ID; return its run record."""
