@@ -201,7 +201,7 @@ class AgentManager:
             self.active_tasks.add(task_id)
             self.merge_targets[target] = task_id
             set_run_cancelled(self.tasks_root, task_id, False)
-        threading.Thread(target=self._work_completion, args=(run_id, operations, instruction.strip()), daemon=True).start()
+        threading.Thread(target=self._guard, args=(self._work_completion, run_id, operations, instruction.strip()), daemon=True).start()
         return dict(run)
 
     def _work_completion(self, run_id: str, operations: dict, instruction: str) -> None:
@@ -281,6 +281,23 @@ class AgentManager:
         except (OSError, RuntimeError, ValueError):
             return ""
         return response.get("message", "") if isinstance(response, dict) else ""
+
+    def _guard(self, worker, run_id: str, *args: object) -> None:
+        """Run worker for run ID and, if it raises unexpectedly, mark the run failed and release its task; return nothing."""
+        try:
+            worker(run_id, *args)
+        except Exception as error:
+            with self.lock:
+                run = self.runs[run_id]
+                run.update(state="failed", message=f"予期しないエラーで停止しました: {error}")
+                self.active_tasks.discard(run["task_id"])
+                for target, task_id in list(self.merge_targets.items()):
+                    if task_id == run["task_id"]:
+                        del self.merge_targets[target]
+                self.cancel_events.pop(run_id, None)
+            if read_task(self.tasks_root, run["task_id"])["implementation"]["state"] == "running":
+                set_implementation(self.tasks_root, run["task_id"], "failed", validation_outcome="inconclusive", needs_followup=True)
+            raise
 
     def cancel_run(self, run_id: str) -> dict:
         """Request cancellation of a running CLI by run ID; return its run record."""
@@ -383,7 +400,7 @@ class AgentManager:
             write_text(report_draft_path(self.tasks_root, task_id), "")
         elif kind == "summary":
             write_text(report_draft_path(self.tasks_root, task_id), "")
-        threading.Thread(target=self._work, args=(run_id,), daemon=True).start()
+        threading.Thread(target=self._guard, args=(self._work, run_id), daemon=True).start()
         return dict(run)
 
     def _work(self, run_id: str) -> None:

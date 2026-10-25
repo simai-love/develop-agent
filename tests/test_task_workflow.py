@@ -280,6 +280,25 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertEqual(len(diagnostics), 1)
         self.assertIn("認証に失敗しました", json.loads(diagnostics[0].read_text(encoding="utf-8"))["stdout_tail"])
 
+    def test_unexpected_worker_error_releases_task(self):
+        """Mark a run failed and release its task when the worker raises an unexpected error."""
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path=sys.executable, workflow=self.service)
+        self.service.agent = manager
+        task = self.service.create_root_task("計画")
+
+        def broken_prompt(task_id: str, phase: str) -> str:
+            """Raise an error that the worker does not expect; return nothing."""
+            raise TypeError("壊れた応答")
+
+        manager._chat_prompt = broken_prompt
+        run = manager.start_chat(task["id"], "plan", "計画")
+        deadline = time.monotonic() + 5
+        while manager.active_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(manager.active_tasks)
+        self.assertEqual(manager.get_run(run["id"])["state"], "failed")
+        self.assertIn("壊れた応答", manager.get_run(run["id"])["message"])
+
     def test_existing_project_records_become_task_owned(self):
         """Keep existing task IDs and reports while assigning each task a branch."""
         legacy = WorkflowService(self.repo, self.repo / "tasks", self.repo / "projects")
