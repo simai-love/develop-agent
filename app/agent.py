@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -90,6 +91,7 @@ class AgentManager:
         self.runs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
         self.active_tasks: set[str] = set()
+        self.merge_targets: dict[str, str] = {}
         self.lock = threading.RLock()
 
     def related_active(self, task_id: str) -> bool:
@@ -175,70 +177,91 @@ class AgentManager:
             raise ValueError("全ての子タスクを完了してください")
         return self._start(task_id, "summary", "result", "", additional_instruction)
 
-    def start_commit(self, task_id: str, expected: dict, instruction: str = "") -> dict:
-        """Start an approved Agent commit run for task ID; return its run record."""
+    def start_completion(self, task_id: str, expected: dict, instruction: str = "") -> dict:
+        """Start an approved Agent run that commits task ID's changes if needed and merges it; return its run record."""
         if not isinstance(instruction, str):
-            raise ValueError("コミット方針は文字列で入力してください")
+            raise ValueError("コミット・統合の方針は文字列で入力してください")
         with self.lock:
             if self.related_active(task_id):
                 raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             task = read_task(self.tasks_root, task_id)
             if not self.cli_paths[task["provider"]]:
                 raise ValueError(f"{task['provider']} CLI is not installed")
-            operation = self.workflow.begin_agent_commit(task_id, expected)
-            append_chat(self.tasks_root, task_id, "result", "user", f"タスク完了のコミットを指示しました。\nコミット方針: {instruction.strip() or 'なし'}")
+            target = self.workflow.merge_target(task_id)
+            if target in self.merge_targets:
+                raise ValueError(f"{target} への統合を別のタスクで実行中です。終わってから再実行してください")
+            operations = self.workflow.begin_agent_completion(task_id, expected)
+            kind = "commit" if operations["commit"] else "merge"
+            request = "タスク完了のコミットと統合を指示しました。" if kind == "commit" else "タスクの統合を指示しました。"
+            append_chat(self.tasks_root, task_id, "result", "user", f"{request}\n方針: {instruction.strip() or 'なし'}")
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": "commit", "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": [], "cancel_requested": False, "cancelable": True}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
+            self.merge_targets[target] = task_id
             set_run_cancelled(self.tasks_root, task_id, False)
-        threading.Thread(target=self._work_commit, args=(run_id, operation, instruction.strip()), daemon=True).start()
+        threading.Thread(target=self._work_completion, args=(run_id, operations, instruction.strip()), daemon=True).start()
         return dict(run)
 
-    def _work_commit(self, run_id: str, operation: dict, instruction: str) -> None:
-        """Ask the Agent to split approved changes into commits and record the result in the result chat."""
+    def _work_completion(self, run_id: str, operations: dict, instruction: str) -> None:
+        """Ask the Agent to commit, merge, and delete the task branch, then verify and record the result in the result chat."""
         run = self.get_run(run_id)
         task_id = run["task_id"]
+        merge = operations["merge"]
         task_path = task_dir(self.tasks_root, task_id)
         output_path = task_path / f".codex-{run_id}.txt"
-        diagnostic_path = task_path / "diagnostics" / f"commit-{run_id}.json"
+        diagnostic_path = task_path / "diagnostics" / f"completion-{run_id}.json"
         previous_hashes = set(read_task(self.tasks_root, task_id)["commit_hashes"])
         result = None
         reply = ""
         error = None
+        aborted = False
         try:
-            code_root = self.workflow.code_path(task_id)
-            common_dir = self.workflow.git.git("rev-parse", "--git-common-dir", cwd=code_root).stdout.strip()
-            common_path = (code_root / common_dir).resolve()
-            prompt = self._commit_prompt(task_id, operation, instruction)
+            git = self.workflow.git
+            source_path = self.workflow.code_path(task_id)
+            target_path = git.ensure(merge["destination"])
+            common_dir = git.git("rev-parse", "--git-common-dir", cwd=target_path).stdout.strip()
+            directories = [task_path, (target_path / common_dir).resolve(), git.worktrees]
+            prompt = self._completion_prompt(task_id, operations, source_path, target_path, instruction)
             schema_path = SKILL_ROOT / "references" / "commit-response.schema.json"
             if run["provider"] == "codex":
-                command = [self.cli_paths["codex"], "exec", "--json", "--output-last-message", str(output_path), "--cd", str(code_root), "--add-dir", str(task_path), "--add-dir", str(common_path)]
+                command = [self.cli_paths["codex"], "exec", "--json", "--output-last-message", str(output_path), "--cd", str(target_path)]
+                for directory in directories:
+                    command += ["--add-dir", str(directory)]
                 if run["model"]:
                     command += ["--model", run["model"]]
                 command += ["--output-schema", str(schema_path), "--sandbox", "workspace-write", "-"]
             else:
-                command = claude_command(self.cli_paths["claude"], run["model"], schema_path, [task_path, common_path, SKILL_ROOT], "workspace-write")
-            result = run_streamed(command, prompt, code_root, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
+                command = claude_command(self.cli_paths["claude"], run["model"], schema_path, [*directories, SKILL_ROOT], "workspace-write")
+            result = run_streamed(command, prompt, target_path, run["provider"], lambda activity: self._record_activity(run_id, activity), self.cancel_events[run_id], self.process_env)
             with self.lock:
                 self.runs[run_id]["cancelable"] = False
             if result.returncode:
                 error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
             reply = self._commit_reply(run["provider"], result, output_path, diagnostic_path)
-            self.workflow.reconcile_agent_commit(operation)
-            outcome = {"state": "succeeded", "message": "コミットを作成し、タスクを完了しました"}
+            self.workflow.finish_agent_completion(operations)
+            outcome = {"state": "succeeded", "message": "統合し、タスクを完了しました"}
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as failure:
             detail = str(failure)
             cancelled = self.cancel_events[run_id].is_set()
-            outcome = {"state": "cancelled" if cancelled else "failed", "message": "実行を中断しました。作成済みのコミットと残りの変更を確認してください。" if cancelled else f"{error}: {detail}" if error else detail}
+            outcome = {"state": "cancelled" if cancelled else "failed", "message": "実行を中断しました。作成済みのコミットと統合先の状態を確認してください。" if cancelled else f"{error}: {detail}" if error else detail}
+            aborted = self.workflow.abandon_agent_merge(merge)
             if result is not None:
                 save_diagnostic(result, diagnostic_path)
         finally:
             output_path.unlink(missing_ok=True)
-        created = [commit for commit in read_task(self.tasks_root, task_id)["commit_hashes"] if commit not in previous_hashes]
-        lines = [outcome["message"] if outcome["state"] != "failed" else f"コミット作成に失敗しました: {outcome['message']}"]
-        lines.append(f"作成したコミット: {', '.join(commit[:10] for commit in created) or 'なし'}")
+        task = read_task(self.tasks_root, task_id)
+        created = [commit for commit in task["commit_hashes"] if commit not in previous_hashes]
+        lines = [outcome["message"] if outcome["state"] != "failed" else f"コミット・統合に失敗しました: {outcome['message']}"]
+        if operations["commit"]:
+            lines.append(f"作成したコミット: {', '.join(commit[:10] for commit in created) or 'なし'}")
+        if outcome["state"] == "succeeded":
+            lines.append(f"マージ: {merge['branch']} → {merge['destination']} ({task['merge_hash'][:10]})")
+        if merge.get("cleanup") == "gui":
+            lines.append("Agentが作業ブランチを削除しなかったため、GUIが削除しました。")
+        if aborted:
+            lines.append(f"途中のマージを中止し、{merge['destination']} を元に戻しました。")
         if diagnostic_path.exists():
             lines.append(f"診断ファイル: {diagnostic_path}")
         if reply:
@@ -248,6 +271,7 @@ class AgentManager:
         with self.lock:
             self.runs[run_id].update(outcome)
             self.active_tasks.discard(task_id)
+            self.merge_targets.pop(merge["destination"], None)
             self.cancel_events.pop(run_id, None)
 
     def _commit_reply(self, provider: str, result: subprocess.CompletedProcess, output_path: Path, diagnostic_path: Path) -> str:
@@ -268,22 +292,38 @@ class AgentManager:
             self.cancel_events[run_id].set()
             return {**run, "activity": [dict(item) for item in run["activity"]]}
 
-    def _commit_prompt(self, task_id: str, operation: dict, instruction: str) -> str:
-        """Build a commit-only prompt from task ID and operation; return its text."""
+    def _completion_prompt(self, task_id: str, operations: dict, source_path: Path, target_path: Path, instruction: str) -> str:
+        """Build a commit-and-merge prompt from task ID, operations, and checkout paths; return its text."""
         task = read_task(self.tasks_root, task_id)
+        commit, merge = operations["commit"], operations["merge"]
+        steps = []
+        if commit:
+            steps.append(
+                f"作業ブランチ {merge['branch']} の作業場所 {source_path} で、現在の未コミット変更だけを意味のある単位で一件以上の通常のGitコミットに分けてください。"
+                "小さな変更なら一件にまとめて構いません。別の目的の変更は分け、必要なら同じファイルの変更も部分的にステージしてください。"
+                "コミットメッセージは簡潔な日本語にし、各コミット本文の末尾に次の行を正確に入れてください。"
+                f"\nTask-Operation: {commit['id']}\n対象ファイル: {json.dumps(commit['expected_paths'], ensure_ascii=False)}\n"
+                "全ての変更をコミットし、作業ツリーを空にしてください。"
+            )
+        steps.append(
+            f"統合先 {merge['destination']} の作業場所 {target_path}（現在のディレクトリ）で次のコマンドを実行してください。\n"
+            f"{shlex.join(['git', 'merge', '--no-ff', '-m', merge['message'], '-m', 'Task-Operation: ' + merge['id'], merge['branch']])}\n"
+            "競合した場合は、競合したファイルだけを両方の変更の意図を保って解決し、それ以外のファイルは変更しないでください。"
+            "解決後は `git add` してから `git commit --no-edit` でマージを完了し、メッセージの Task-Operation 行を残してください。"
+            "確実に解決できない場合は `git merge --abort` で元に戻し、理由を返してください。"
+        )
+        steps.append(
+            f"マージが成功した場合だけ、{target_path} で `git worktree remove {source_path}` と `git branch -d {merge['branch']}` を実行し、作業ブランチを削除してください。"
+        )
         return (
-            "日本語で作業してください。ユーザーがこのタスクの変更全体を確認し、完了を承認しました。"
-            "現在の未コミット変更だけを、意味のある単位で一件以上の通常のGitコミットに分けてください。"
-            "小さな変更なら一件にまとめて構いません。別の目的の変更は分け、必要なら同じファイルの変更も部分的にステージしてください。"
-            "コミットメッセージは簡潔な日本語にしてください。各コミット本文の末尾に指定の Task-Operation 行を正確に入れてください。"
-            "コード、計画、レポートを変更せず、対象外のファイルをコミットしないでください。"
-            "マージ、rebase、reset、amend、ブランチ操作は行わないでください。"
-            "全ての変更をコミットしたら作業ツリーを空にし、JSONで結果を短く返してください。\n"
+            "日本語で作業してください。ユーザーがこのタスクの変更全体を確認し、完了と統合を承認しました。次の手順を順に行ってください。\n"
+            + "".join(f"{number}. {step}\n" for number, step in enumerate(steps, 1))
+            + "コード、計画、レポートを変更せず、対象外のファイルをコミットしないでください。"
+            "rebase、reset、amend、cherry-pick、push、強制オプション、指示にないブランチの操作は行わないでください。"
+            "終わったらJSONで結果を短く返してください。\n"
             f"最初に {SKILL_ROOT / 'SKILL.md'} を読んでください。\n"
-            f"タスク: {task['title']}\n作業ブランチ: {operation['branch']}\n"
-            f"対象ファイル: {json.dumps(operation['expected_paths'], ensure_ascii=False)}\n"
-            f"Task-Operation: {operation['id']}\n"
-            + (f"ユーザーのコミット方針:\n{instruction}\n" if instruction else "")
+            f"タスク: {task['title']}\n"
+            + (f"ユーザーのコミット・統合の方針:\n{instruction}\n" if instruction else "")
         )
 
     def get_run(self, run_id: str) -> dict | None:

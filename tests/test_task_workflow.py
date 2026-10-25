@@ -19,6 +19,24 @@ def git(*args: str, cwd: Path) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
+FAKE_COMPLETION = (
+    "import json, re, shlex, subprocess, sys\n"
+    "prompt = sys.stdin.read()\n"
+    "def complete(names, merge=True):\n"
+    "    operations = re.findall(r'Task-Operation: (\\w+)', prompt)\n"
+    "    source = re.search(r'作業場所 (\\S+) で、現在', prompt).group(1)\n"
+    "    for name in names:\n"
+    "        subprocess.run(['git', '-C', source, 'add', name], check=True)\n"
+    "        subprocess.run(['git', '-C', source, 'commit', '-q', '-m', name, '-m', 'Task-Operation: ' + operations[0]], check=True)\n"
+    "    if merge:\n"
+    "        subprocess.run(shlex.split(next(line for line in prompt.splitlines() if line.startswith('git merge'))), check=True, capture_output=True)\n"
+    "        for command in re.findall(r'`(git (?:worktree remove|branch -d) [^`]+)`', prompt):\n"
+    "            subprocess.run(shlex.split(command), check=True, capture_output=True)\n"
+    "    path = sys.argv[sys.argv.index('--output-last-message') + 1]\n"
+    "    open(path, 'w', encoding='utf-8').write(json.dumps({'message': '完了しました'}, ensure_ascii=False))\n"
+)
+
+
 class TaskWorkflowTest(unittest.TestCase):
     """Check branch creation, completion, and migration using real Git history."""
 
@@ -39,28 +57,110 @@ class TaskWorkflowTest(unittest.TestCase):
         """Remove the isolated repository after a test; return nothing."""
         self.temporary.cleanup()
 
+    def agent_merge(self, operation: dict, remove_branch: bool = True) -> None:
+        """Simulate an Agent merge for operation, optionally deleting the branch; return nothing."""
+        target_path = self.service.git.ensure(operation["destination"])
+        git("merge", "--no-ff", "-q", "-m", operation["message"], "-m", f"Task-Operation: {operation['id']}", operation["branch"], cwd=target_path)
+        if remove_branch:
+            git("worktree", "remove", str(self.service.git.path(operation["branch"])), cwd=target_path)
+            git("branch", "-d", operation["branch"], cwd=target_path)
+
     def test_child_and_root_merge_to_their_owners(self):
-        """Merge a child into its parent and the parent into dev."""
+        """Accept Agent merges of a child into its parent and the parent into dev."""
         root = self.service.create_root_task("親")
         child = self.service.create_child(root["id"], "子")
         self.service.claim_code(child["id"])
         (self.service.code_path(child["id"]) / "feature.txt").write_text("done\n", encoding="utf-8")
         write_text(report_draft_path(self.service.tasks_root, child["id"]), "# 検証\n")
         append_report(self.service.tasks_root, child["id"], "supported", ["feature.txt"], [], "codex", "test", False)
-        operation = self.service.begin_agent_commit(child["id"], self.service.completion_preview(child["id"]))
+        operations = self.service.begin_agent_completion(child["id"], self.service.completion_preview(child["id"]))
         git("add", "feature.txt", cwd=self.service.code_path(child["id"]))
-        git("commit", "-q", "-m", "子を実装", "-m", f"Task-Operation: {operation['id']}", cwd=self.service.code_path(child["id"]))
-        self.service.reconcile_agent_commit(operation)
+        git("commit", "-q", "-m", "子を実装", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(child["id"]))
+        self.agent_merge(operations["merge"])
+        self.service.finish_agent_completion(operations)
         self.assertEqual(read_task(self.service.tasks_root, child["id"])["status"], "completed")
+        self.assertNotIn("cleanup", operations["merge"])
         self.assertTrue((self.service.code_path(root["id"]) / "feature.txt").exists())
         self.assertFalse((self.repo / "feature.txt").exists())
         write_text(report_draft_path(self.service.tasks_root, root["id"]), "# 総括\n")
         append_report(self.service.tasks_root, root["id"], "supported", [], [], "codex", "test", False, "summary", self.service.summary_basis(root["id"]))
         preview = self.service.completion_preview(root["id"])
         self.assertEqual(preview["target"], "dev")
-        self.service.complete_task(root["id"], preview)
+        operations = self.service.begin_agent_completion(root["id"], preview)
+        self.assertIsNone(operations["commit"])
+        self.agent_merge(operations["merge"], remove_branch=False)
+        self.service.finish_agent_completion(operations)
+        self.assertEqual(operations["merge"]["cleanup"], "gui")
+        self.assertFalse(self.service.git.has_branch(root["branch"]))
         self.assertEqual((self.repo / "feature.txt").read_text(), "done\n")
         self.assertEqual(read_task(self.service.tasks_root, root["id"])["status"], "completed")
+
+    def test_merge_with_unrelated_change_is_rejected(self):
+        """Reject an Agent merge whose tree differs from Git's conflict-free result."""
+        task = self.ready_task("葉", {"feature.txt": "done\n"})
+        operations = self.service.begin_agent_completion(task["id"], self.service.completion_preview(task["id"]))
+        git("add", "feature.txt", cwd=self.service.code_path(task["id"]))
+        git("commit", "-q", "-m", "実装", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(task["id"]))
+        git("merge", "--no-ff", "--no-commit", operations["merge"]["branch"], cwd=self.repo)
+        (self.repo / "extra.txt").write_text("extra\n", encoding="utf-8")
+        git("add", "extra.txt", cwd=self.repo)
+        git("commit", "-q", "-m", "統合", "-m", f"Task-Operation: {operations['merge']['id']}", cwd=self.repo)
+        with self.assertRaisesRegex(ValueError, "自動マージと一致しません"):
+            self.service.finish_agent_completion(operations)
+        self.assertNotEqual(read_task(self.service.tasks_root, task["id"])["status"], "completed")
+        self.assertTrue(read_task(self.service.tasks_root, task["id"])["commit_hash"])
+
+    def test_resolved_conflict_is_accepted_and_unresolved_merge_is_aborted(self):
+        """Abort an unfinished conflicting merge, then accept a resolution limited to task files."""
+        first = self.ready_task("先", {"shared.txt": "first\n"})
+        second = self.ready_task("後", {"shared.txt": "second\n"})
+        operations = self.service.begin_agent_completion(first["id"], self.service.completion_preview(first["id"]))
+        git("add", "shared.txt", cwd=self.service.code_path(first["id"]))
+        git("commit", "-q", "-m", "先", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(first["id"]))
+        self.agent_merge(operations["merge"])
+        self.service.finish_agent_completion(operations)
+        operations = self.service.begin_agent_completion(second["id"], self.service.completion_preview(second["id"]))
+        git("add", "shared.txt", cwd=self.service.code_path(second["id"]))
+        git("commit", "-q", "-m", "後", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(second["id"]))
+        subprocess.run(["git", "merge", "--no-ff", "-m", "統合", operations["merge"]["branch"]], cwd=self.repo, capture_output=True)
+        with self.assertRaisesRegex(ValueError, "マージを作成しませんでした"):
+            self.service.finish_agent_completion(operations)
+        self.assertTrue(self.service.abandon_agent_merge(operations["merge"]))
+        self.assertTrue(self.service.git.clean(self.repo))
+        self.assertEqual(operations["merge"]["state"], "failed")
+        preview = self.service.completion_preview(second["id"])
+        self.assertEqual(preview["kind"], "merge")
+        operations = self.service.begin_agent_completion(second["id"], preview)
+        subprocess.run(["git", "merge", "--no-ff", "-m", operations["merge"]["message"], "-m", f"Task-Operation: {operations['merge']['id']}", operations["merge"]["branch"]], cwd=self.repo, capture_output=True)
+        (self.repo / "shared.txt").write_text("first\nsecond\n", encoding="utf-8")
+        git("add", "shared.txt", cwd=self.repo)
+        git("commit", "-q", "--no-edit", cwd=self.repo)
+        self.service.finish_agent_completion(operations)
+        self.assertEqual(read_task(self.service.tasks_root, second["id"])["status"], "completed")
+        self.assertEqual((self.repo / "shared.txt").read_text(), "first\nsecond\n")
+
+    def test_restart_finishes_agent_commit_and_merge(self):
+        """Finish commits and an Agent merge recorded in Git before a server restart."""
+        task = self.ready_task("再起動", {"feature.txt": "done\n"})
+        operations = self.service.begin_agent_completion(task["id"], self.service.completion_preview(task["id"]))
+        git("add", "feature.txt", cwd=self.service.code_path(task["id"]))
+        git("commit", "-q", "-m", "実装", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(task["id"]))
+        self.agent_merge(operations["merge"])
+        TaskWorkflowService(self.repo, self.repo / "tasks", self.repo / "projects").recover_operations()
+        task = read_task(self.service.tasks_root, task["id"])
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["merge_hash"], git("rev-parse", "dev", cwd=self.repo))
+
+    def ready_task(self, title: str, files: dict[str, str]) -> dict:
+        """Create a root task with uncommitted files and a validation report; return the task."""
+        task = self.service.create_root_task(title)
+        self.service.claim_code(task["id"])
+        for name, content in files.items():
+            (self.service.code_path(task["id"]) / name).write_text(content, encoding="utf-8")
+        set_implementation(self.service.tasks_root, task["id"], "succeeded", list(files))
+        write_text(report_draft_path(self.service.tasks_root, task["id"]), "# 検証\n")
+        append_report(self.service.tasks_root, task["id"], "supported", list(files), [], "codex", "test", False)
+        return read_task(self.service.tasks_root, task["id"])
 
     def test_independent_task_agents_run_together(self):
         """Run independent task Agents together and block a related parent."""
@@ -98,8 +198,8 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertFalse(manager.active_tasks)
 
     def test_commit_agent_starts_while_another_task_runs(self):
-        """Allow an approved commit Agent beside an unrelated task Agent."""
-        cli = self.repo / "fake-codex"
+        """Allow an approved commit Agent beside an unrelated task Agent, but not beside another merge into dev."""
+        cli = self.repo.parent / "fake-codex"
         cli.write_text(f"#!{sys.executable}\nimport sys, time\nsys.stdin.read()\ntime.sleep(30)\n", encoding="utf-8")
         cli.chmod(0o755)
         manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
@@ -112,8 +212,11 @@ class TaskWorkflowTest(unittest.TestCase):
         set_implementation(self.service.tasks_root, committing["id"], "succeeded", ["feature.txt"])
         write_text(report_draft_path(self.service.tasks_root, committing["id"]), "# 検証\n")
         append_report(self.service.tasks_root, committing["id"], "supported", ["feature.txt"], [], "codex", "test", False)
-        second = manager.start_commit(committing["id"], self.service.completion_preview(committing["id"]))
+        second = manager.start_completion(committing["id"], self.service.completion_preview(committing["id"]))
         self.assertEqual(manager.active_tasks, {running["id"], committing["id"]})
+        waiting = self.ready_task("次の完了", {"other.txt": "other\n"})
+        with self.assertRaisesRegex(ValueError, "dev への統合を別のタスクで実行中"):
+            manager.start_completion(waiting["id"], self.service.completion_preview(waiting["id"]))
         for run in (first, second):
             manager.cancel_run(run["id"])
         deadline = time.monotonic() + 5
@@ -121,58 +224,59 @@ class TaskWorkflowTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertFalse(manager.active_tasks)
 
-    def run_commit(self, script: str, instruction: str) -> dict:
-        """Run a fake commit CLI script with instruction on a new task; return the finished task."""
+    def run_completion(self, script: str, instruction: str, task: dict | None = None) -> dict:
+        """Run a fake completion CLI script with instruction on a ready task; return the task afterwards."""
         cli = self.repo.parent / "fake-commit-codex"
         cli.write_text(f"#!{sys.executable}\n{script}", encoding="utf-8")
         cli.chmod(0o755)
         manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
         self.service.agent = manager
-        task = self.service.create_root_task("完了待ち")
-        self.service.claim_code(task["id"])
-        (self.service.code_path(task["id"]) / "feature.txt").write_text("done\n", encoding="utf-8")
-        set_implementation(self.service.tasks_root, task["id"], "succeeded", ["feature.txt"])
-        write_text(report_draft_path(self.service.tasks_root, task["id"]), "# 検証\n")
-        append_report(self.service.tasks_root, task["id"], "supported", ["feature.txt"], [], "codex", "test", False)
-        manager.start_commit(task["id"], self.service.completion_preview(task["id"]), instruction)
+        task = task or self.ready_task("完了待ち", {"api.txt": "api\n", "ui.txt": "ui\n"})
+        manager.start_completion(task["id"], self.service.completion_preview(task["id"]), instruction)
         deadline = time.monotonic() + 10
         while manager.active_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
         return read_task(self.service.tasks_root, task["id"])
 
-    def test_commit_run_history_is_saved_to_result_chat(self):
-        """Record the commit instruction, created commits, and Agent reply in the result chat."""
-        task = self.run_commit(
-            "import json, re, subprocess, sys\n"
-            "prompt = sys.stdin.read()\n"
-            "operation = re.search(r'Task-Operation: (\\w+)', prompt).group(1)\n"
-            "subprocess.run(['git', 'add', 'feature.txt'], check=True)\n"
-            "subprocess.run(['git', 'commit', '-q', '-m', '機能を追加', '-m', f'Task-Operation: {operation}'], check=True)\n"
-            "path = sys.argv[sys.argv.index('--output-last-message') + 1]\n"
-            "open(path, 'w', encoding='utf-8').write(json.dumps({'message': '1件にまとめました'}))\n",
-            "1件にまとめる",
-        )
+    def test_agent_commits_merges_and_deletes_branch(self):
+        """Record the instruction, two commits, merge, and Agent reply after a full completion run."""
+        task = self.run_completion(FAKE_COMPLETION + "complete(['api.txt', 'ui.txt'])\n", "APIと画面を分ける")
         self.assertEqual(task["status"], "completed")
+        self.assertEqual(len(task["commit_hashes"]), 2)
+        self.assertFalse(self.service.git.has_branch(task["branch"]))
+        self.assertEqual((self.repo / "ui.txt").read_text(), "ui\n")
         chat = read_chat(self.service.tasks_root, task["id"], "result")
-        self.assertIn("コミット方針: 1件にまとめる", chat[-2]["content"])
+        self.assertIn("方針: APIと画面を分ける", chat[-2]["content"])
         self.assertEqual(chat[-1]["role"], "system")
         self.assertIn(task["commit_hashes"][-1][:10], chat[-1]["content"])
-        self.assertIn("1件にまとめました", chat[-1]["content"])
+        self.assertIn(f"→ dev ({task['merge_hash'][:10]})", chat[-1]["content"])
+        self.assertNotIn("GUIが削除", chat[-1]["content"])
+        self.assertIn("完了しました", chat[-1]["content"])
         self.assertFalse((self.service.tasks_root / task["id"] / "diagnostics").exists())
 
-    def test_failed_commit_run_saves_reason_and_diagnostic(self):
-        """Record a failed commit run's reason and keep its CLI output for diagnosis."""
-        task = self.run_commit(
+    def test_partial_commit_run_can_be_retried(self):
+        """Keep a verified partial commit, then finish the remaining commit and merge on retry."""
+        task = self.run_completion(FAKE_COMPLETION + "complete(['api.txt'], merge=False)\n", "")
+        self.assertEqual(len(task["commit_hashes"]), 1)
+        self.assertNotEqual(task["status"], "completed")
+        self.assertEqual(self.service.completion_preview(task["id"])["paths"], ["ui.txt"])
+        task = self.run_completion(FAKE_COMPLETION + "complete(['ui.txt'])\n", "", task)
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(len(task["commit_hashes"]), 2)
+
+    def test_failed_completion_run_saves_reason_and_diagnostic(self):
+        """Record a failed completion run's reason and keep its CLI output for diagnosis."""
+        task = self.run_completion(
             "import json, sys\nsys.stdin.read()\n"
             "print(json.dumps({'type': 'error', 'message': '認証に失敗しました'}, ensure_ascii=False))\nsys.exit(1)\n",
             "",
         )
         self.assertNotEqual(task["status"], "completed")
         chat = read_chat(self.service.tasks_root, task["id"], "result")
-        self.assertIn("コミット方針: なし", chat[-2]["content"])
-        self.assertIn("コミット作成に失敗しました: 認証に失敗しました", chat[-1]["content"])
+        self.assertIn("方針: なし", chat[-2]["content"])
+        self.assertIn("コミット・統合に失敗しました: 認証に失敗しました", chat[-1]["content"])
         self.assertIn("作成したコミット: なし", chat[-1]["content"])
-        diagnostics = list((self.service.tasks_root / task["id"] / "diagnostics").glob("commit-*.json"))
+        diagnostics = list((self.service.tasks_root / task["id"] / "diagnostics").glob("completion-*.json"))
         self.assertEqual(len(diagnostics), 1)
         self.assertIn("認証に失敗しました", json.loads(diagnostics[0].read_text(encoding="utf-8"))["stdout_tail"])
 

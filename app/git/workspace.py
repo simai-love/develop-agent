@@ -149,6 +149,28 @@ class GitWorkspace:
             raise
         return self.head(target)
 
+    def has_branch(self, branch: str) -> bool:
+        """Return whether a local branch ref exists."""
+        return self.git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0
+
+    def abort_merge(self, branch: str, source: str) -> bool:
+        """Abort an unfinished merge of source in branch's checkout; return whether one was aborted."""
+        path = self.path(branch)
+        if not path.exists() or not self.has_branch(source):
+            return False
+        merging = self.git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=path, check=False).stdout.strip()
+        if merging != self.head(source):
+            return False
+        self.git("merge", "--abort", cwd=path)
+        return True
+
+    def merge_tree(self, target: str, source: str) -> str | None:
+        """Return the tree Git would create by merging source into target, or None on conflicts."""
+        result = self.git("merge-tree", "--write-tree", target, source, check=False)
+        if result.returncode not in (0, 1):
+            raise ValueError(result.stderr.strip() or "マージ結果を計算できません")
+        return result.stdout.split()[0] if result.returncode == 0 else None
+
     def remove(self, branch: str, merged_into: str | None = None) -> None:
         """Remove branch after optional target ancestry check; return nothing."""
         if merged_into:
@@ -156,6 +178,7 @@ class GitWorkspace:
         path = self.path(branch)
         if path.exists() and path != self.root:
             self.git("worktree", "remove", str(path))
+        self.git("worktree", "prune")
         self.git("branch", "-D", branch)
 
     def rename(self, old_branch: str, new_branch: str) -> None:
