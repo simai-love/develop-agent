@@ -197,27 +197,65 @@ class TaskWorkflowService:
         """Create a pending operation for task_id and return it."""
         return self.record_operation(task_id, {"id": uuid4().hex, "kind": kind, "target_id": task_id, "branch": branch, "destination": destination, "state": "started", "git_hash": None, "created_at": now()})
 
-    def begin_agent_commit(self, task_id: str, expected: dict) -> dict:
-        """Record an approved tree for an Agent commit and return the operation."""
+    def merge_target(self, task_id: str) -> str:
+        """Return the branch that task_id merges into: its parent's branch or dev."""
+        task = read_task(self.tasks_root, task_id)
+        return read_task(self.tasks_root, task["parent_id"])["branch"] if task["parent_id"] else "dev"
+
+    def begin_agent_completion(self, task_id: str, expected: dict) -> dict:
+        """Record approved commit and merge operations for an Agent completion run; return both."""
         with self.lock:
             preview = self.completion_preview(task_id)
-            if preview["kind"] != "commit" or any(expected.get(key) != preview[key] for key in ("kind", "head", "paths", "report_number", "snapshot")):
-                raise ValueError("確認後にタスクの変更が変わりました。再確認してください")
             task = read_task(self.tasks_root, task_id)
-            if not task["code_owner"]:
-                raise ValueError("このタスクの作業ブランチが予約されていません")
-            operation = self.begin_operation(task_id, "agent_commit", preview["branch"])
-            operation.update(base_head=preview["head"], expected_tree=preview["snapshot"], expected_paths=preview["paths"])
-            return self.record_operation(task_id, operation)
+            commit = None
+            if preview["kind"] == "commit":
+                if any(expected.get(key) != preview[key] for key in ("kind", "head", "paths", "report_number", "snapshot")):
+                    raise ValueError("確認後にタスクの変更が変わりました。再確認してください")
+                if not task["code_owner"]:
+                    raise ValueError("このタスクの作業ブランチが予約されていません")
+            elif preview["kind"] == "merge":
+                if any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number", "target_head")):
+                    raise ValueError("確認後にタスクの状態が変わりました。再確認してください")
+            else:
+                raise ValueError("このタスクはAgentで統合できません")
+            target = self.merge_target(task_id)
+            if not self.git.clean(self.git.ensure(target)):
+                raise ValueError("統合先の作業ツリーの変更を整理してください")
+            merge = self.begin_operation(task_id, "agent_merge", preview["branch"], target)
+            if preview["kind"] == "commit":
+                commit = self.begin_operation(task_id, "agent_commit", preview["branch"])
+                commit.update(base_head=preview["head"], expected_tree=preview["snapshot"], expected_paths=preview["paths"], merge_operation=merge["id"])
+                self.record_operation(task_id, commit)
+            merge.update(target_head=self.git.head(target), source_head=None if commit else preview["head"], message=f"{task['title']}を統合")
+            self.record_operation(task_id, merge)
+            return {"commit": commit, "merge": merge}
 
-    def reconcile_agent_commit(self, operation: dict) -> dict:
-        """Validate Agent commits and finish task when the tree matches."""
+    def finish_agent_completion(self, operations: dict) -> dict:
+        """Verify an Agent run's commits and merge from operations; return the completed task."""
+        with self.lock:
+            if operations["commit"]:
+                self.reconcile_agent_commit(operations["commit"], operations["merge"])
+            return self.reconcile_agent_merge(operations["merge"])
+
+    def merged_source(self, merge: dict) -> str | None:
+        """Return the source commit of the Agent merge recorded by merge, or None before it exists."""
+        head = self.git.head(merge["destination"])
+        parents = self.git.git("rev-list", "--parents", "-n", "1", head).stdout.split()
+        message = self.git.git("log", "-1", "--format=%B", head).stdout
+        if len(parents) == 3 and parents[1] == merge["target_head"] and f"Task-Operation: {merge['id']}" in message:
+            return parents[2]
+        return None
+
+    def reconcile_agent_commit(self, operation: dict, merge: dict | None = None) -> dict:
+        """Validate Agent commits from operation and record them; return the task."""
         with self.lock:
             task_id = operation["target_id"]
             task = read_task(self.tasks_root, task_id)
             branch = operation["branch"]
-            path = self.git.ensure(branch)
-            hashes = self.git.commits_since(branch, operation["base_head"])
+            source = self.git.head(branch) if self.git.has_branch(branch) else self.merged_source(merge) if merge else None
+            if not source:
+                raise ValueError("作業ブランチが見つかりません。Git履歴を確認してください")
+            hashes = self.git.commits_since(source, operation["base_head"])
             if not hashes:
                 raise ValueError("Agentはコミットを作成しませんでした")
             for commit in hashes:
@@ -234,69 +272,97 @@ class TaskWorkflowService:
             save_metadata(self.tasks_root, task)
             operation.update(git_hash=hashes[-1], state="partial")
             self.record_operation(task_id, operation)
-            final_tree = self.git.git("rev-parse", f"{branch}^{{tree}}").stdout.strip()
-            if final_tree != operation["expected_tree"] or not self.git.clean(path):
+            final_tree = self.git.git("rev-parse", f"{source}^{{tree}}").stdout.strip()
+            path = self.git.path(branch)
+            if final_tree != operation["expected_tree"] or (self.git.has_branch(branch) and path.exists() and not self.git.clean(path)):
                 raise ValueError("一部のコミットだけが作成されました。残りの変更を確認してください")
             task["commit_pending"] = False
             save_metadata(self.tasks_root, task)
             self.release_code(task_id)
             operation["state"] = "complete"
             self.record_operation(task_id, operation)
-            return self._merge_reviewed_task(task_id, self.completion_preview(task_id))
+            return read_task(self.tasks_root, task_id)
+
+    def reconcile_agent_merge(self, operation: dict) -> dict:
+        """Verify the Agent's merge from operation, finish branch cleanup, and return the completed task."""
+        with self.lock:
+            task_id = operation["target_id"]
+            task = read_task(self.tasks_root, task_id)
+            destination, base = operation["destination"], operation["target_head"]
+            head = self.git.head(destination)
+            if head == base:
+                raise ValueError("Agentはマージを作成しませんでした")
+            source = operation["source_head"] or task["commit_hash"]
+            if self.merged_source(operation) != source:
+                raise ValueError("統合先に想定外のコミットがあります。Git履歴を確認してください")
+            expected_tree = self.git.merge_tree(base, source)
+            if expected_tree and self.git.git("rev-parse", f"{head}^{{tree}}").stdout.strip() != expected_tree:
+                raise ValueError("Agentのマージ結果がGitの自動マージと一致しません。Git履歴を確認してください")
+            if not expected_tree:
+                fork = self.git.git("merge-base", base, source).stdout.strip()
+                if not set(self.git.diff_files(base, head)).issubset(self.git.diff_files(fork, source)):
+                    raise ValueError("Agentの競合解決にタスク外の変更があります。Git履歴を確認してください")
+            if not self.git.clean(self.git.path(destination)):
+                raise ValueError("統合先に未コミットの変更が残っています")
+            operation.update(state="git_done", git_hash=head)
+            self.record_operation(task_id, operation)
+            result = mark_task_completed(self.tasks_root, task_id, head, "merge")
+            if self.git.has_branch(operation["branch"]):
+                self.git.remove(operation["branch"], destination)
+                operation["cleanup"] = "gui"
+            self.git.git("worktree", "prune")
+            operation["state"] = "complete"
+            self.record_operation(task_id, operation)
+            return result
+
+    def abandon_agent_merge(self, operation: dict) -> bool:
+        """Abort an unfinished Agent merge and mark operation failed; return whether a merge was aborted."""
+        with self.lock:
+            aborted = self.git.abort_merge(operation["destination"], operation["branch"])
+            if self.git.head(operation["destination"]) == operation["target_head"]:
+                operation["state"] = "failed"
+                self.record_operation(operation["target_id"], operation)
+            return aborted
 
     def complete_task(self, task_id: str, expected: dict) -> dict:
-        """Merge an approved task branch and return its completed record."""
+        """Complete a legacy task without new Git history and return its record."""
         with self.lock:
             if self.agent and self.agent.related_active(task_id):
                 raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             preview = self.completion_preview(task_id)
-            if any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number")):
+            if preview["kind"] != "legacy" or any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number")):
                 raise ValueError("確認後にタスクの状態が変わりました。再確認してください")
-            if preview["kind"] == "legacy":
-                return mark_task_completed(self.tasks_root, task_id, None, "legacy")
-            if preview["kind"] != "merge" or expected.get("target_head") != preview["target_head"]:
-                raise ValueError("マージ先が変更されました。再確認してください")
-            return self._merge_reviewed_task(task_id, preview)
-
-    def _merge_reviewed_task(self, task_id: str, preview: dict) -> dict:
-        """Merge task_id to its parent or dev, then return its record."""
-        operation = self.begin_operation(task_id, "merge", preview["branch"], preview["target"])
-        message = f"{preview['message']}\n\nTask-Operation: {operation['id']}"
-        commit = self.git.merge(preview["branch"], preview["target"], message)
-        operation.update(state="git_done", git_hash=commit)
-        self.record_operation(task_id, operation)
-        result = mark_task_completed(self.tasks_root, task_id, commit, "merge")
-        self.git.remove(preview["branch"], preview["target"])
-        operation["state"] = "complete"
-        self.record_operation(task_id, operation)
-        return result
+            return mark_task_completed(self.tasks_root, task_id, None, "legacy")
 
     def recover_operations(self) -> None:
-        """Finish task metadata after a recorded merge or commit; return nothing."""
+        """Finish task metadata after Agent commits or merges interrupted by a restart; return nothing."""
         with self.lock:
             for task in list_tasks(self.tasks_root):
                 directory = task_dir(self.tasks_root, task["id"]) / "operations"
-                for path in sorted(directory.glob("*.json")) if directory.exists() else []:
-                    operation = json.loads(path.read_text(encoding="utf-8"))
-                    if operation["state"] == "complete":
-                        continue
-                    if operation["kind"] == "agent_commit":
-                        try:
-                            self.reconcile_agent_commit(operation)
-                        except ValueError:
-                            pass
-                        continue
-                    destination = operation["destination"]
-                    head = self.git.head(destination)
-                    message = self.git.git("log", "-1", "--format=%B", destination).stdout
-                    if operation["git_hash"] != head and f"Task-Operation: {operation['id']}" not in message:
-                        continue
-                    if read_task(self.tasks_root, task["id"])["status"] != "completed":
-                        mark_task_completed(self.tasks_root, task["id"], head, "merge")
-                    if self.git.git("show-ref", "--verify", f"refs/heads/{operation['branch']}", check=False).returncode == 0:
-                        self.git.remove(operation["branch"], destination)
-                    operation["state"] = "complete"
-                    self.record_operation(task["id"], operation)
+                operations = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(directory.glob("*.json"))] if directory.exists() else []
+                by_id = {operation["id"]: operation for operation in operations}
+                pending = [operation for operation in operations if operation["state"] not in {"complete", "failed"}]
+                for operation in sorted(pending, key=lambda item: item["kind"] != "agent_commit"):
+                    try:
+                        if operation["kind"] == "agent_commit":
+                            self.reconcile_agent_commit(operation, by_id.get(operation.get("merge_operation")))
+                        elif operation["kind"] == "agent_merge":
+                            self.reconcile_agent_merge(operation)
+                        elif self.git.head(operation["destination"]) == operation["git_hash"] or f"Task-Operation: {operation['id']}" in self.git.git("log", "-1", "--format=%B", operation["destination"]).stdout:
+                            self._finish_recorded_merge(operation)
+                    except ValueError:
+                        if operation["kind"] == "agent_merge":
+                            self.abandon_agent_merge(operation)
+
+    def _finish_recorded_merge(self, operation: dict) -> None:
+        """Finish metadata and branch cleanup for a merge made by an older GUI; return nothing."""
+        task_id, destination = operation["target_id"], operation["destination"]
+        if read_task(self.tasks_root, task_id)["status"] != "completed":
+            mark_task_completed(self.tasks_root, task_id, self.git.head(destination), "merge")
+        if self.git.has_branch(operation["branch"]):
+            self.git.remove(operation["branch"], destination)
+        operation["state"] = "complete"
+        self.record_operation(task_id, operation)
 
     def delete_task(self, task_id: str) -> list[str]:
         """Delete an uncommitted task subtree and its branches; return IDs."""

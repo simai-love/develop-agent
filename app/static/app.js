@@ -116,8 +116,11 @@ function renderAgentProgress() {
   cancelButton.classList.toggle('hidden', !run || (!run.cancelable && !run.cancel_requested));
   cancelButton.disabled = Boolean(run?.cancel_requested);
   if (run?.kind === 'commit') {
-    title.textContent = 'コミットを作成中';
-    description.textContent = 'Agentが変更を意味のある単位に分けてコミットしています。';
+    title.textContent = 'コミット・統合中';
+    description.textContent = 'Agentが変更を意味のある単位に分けてコミットし、統合先へマージしています。';
+  } else if (run?.kind === 'merge') {
+    title.textContent = '統合中';
+    description.textContent = 'Agentが統合先へマージし、作業ブランチを削除しています。';
   } else if (run?.kind === 'chat' && run.phase === 'plan') {
     title.textContent = '計画を作成中';
     description.textContent = 'Agentが要件と仮説を整理しています。完了すると計画が更新されます。';
@@ -1165,9 +1168,14 @@ function bindEvents() {
   $('#complete-button').addEventListener('click', async () => {
     try {
       const preview = await api(`/api/tasks/${state.task.id}/completion-preview`);
-      if (preview.kind === 'commit') {
+      if (preview.kind === 'commit' || preview.kind === 'merge') {
+        const target = state.task.parent_id ? '親ブランチ' : 'dev';
         pendingCommit = { taskId: state.task.id, preview };
-        $('#commit-branch').textContent = preview.branch;
+        $('#commit-title').textContent = preview.kind === 'commit' ? 'タスクを完了しますか？' : `${target}へ統合しますか？`;
+        $('#commit-description').textContent = preview.kind === 'commit'
+          ? `変更全体を確認してください。承認後、Agent が内容に応じて一件または複数件のコミットを作成し、${target}へ統合して作業ブランチを削除します。`
+          : `承認後、Agent が${target}へ統合し、競合があれば解決して作業ブランチを削除します。解決できない場合は統合を取り消します。`;
+        $('#commit-branch').textContent = `${preview.branch} → ${preview.target || state.tasks.find((item) => item.id === state.task.parent_id)?.branch || 'dev'}`;
         $('#commit-paths').replaceChildren(...preview.paths.map((path) => {
           const item = document.createElement('li');
           item.textContent = path;
@@ -1178,8 +1186,7 @@ function bindEvents() {
         $('#commit-instruction').focus();
         return;
       }
-      const details = preview.kind === 'legacy' ? '移行前の検証記録として完了します。新しいコミットは作りません。' : `マージ: ${preview.branch} → ${preview.target}\n対象: ${preview.paths.join(', ')}`;
-      if (!window.confirm(`検証結果を確認し、タスクを完了しますか？\n${details}`)) return;
+      if (!window.confirm('検証結果を確認し、タスクを完了しますか？\n移行前の検証記録として完了します。新しいコミットは作りません。')) return;
       state.task = await api(`/api/tasks/${state.task.id}/complete`, {
         method: 'POST', body: JSON.stringify(preview),
       });
