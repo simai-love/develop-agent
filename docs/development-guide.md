@@ -21,7 +21,7 @@
 
 `POST /api/repositories` は Git ルートと `dev` ブランチを確認し、新しい作業先を登録します。
 
-`GET /api/repositories` は登録済みの作業先を返します。各タスク API は `repo` クエリで作業先を選びます。省略時は `develop-agent` です。既存の自アプリタスクは `tasks/<id>/`、追加リポジトリのタスクは `tasks/<リポジトリID>/<id>/` に保存します。`gpu_solver` を選ぶと、タスク記録はこのアプリに置いたまま、そのリポジトリの Git ブランチと worktree を操作します。GPU 側から移した 11 件のタスクは `tasks/gpu_solver/` にあり、元の `gpu_solver/tasks/` はバックアップとして保持します。移行時には記録内の絶対パスとタスク間シンボリックリンクを中央保存先に更新しました。登録は Git 管理外の `.codex/repositories.local.json` に置きます。GPU 登録で WSL の `/dev/dxg` がある場合は、Codex サンドボックス設定と HPC SDK の環境変数を Agent の子プロセスへ渡します。登録先を一覧で開くだけでは、既存タスクの回復処理や移行処理を走らせません。
+`GET /api/repositories` は登録済みの作業先を返します。各タスク API は `repo` クエリで作業先を選びます。省略時は `develop-agent` です。既存の自アプリタスクは `tasks/<id>/`、追加リポジトリのタスクは `tasks/<リポジトリID>/<id>/` に保存します。`gpu_solver` を選ぶと、タスク記録はこのアプリに置いたまま、そのリポジトリの Git ブランチと worktree を操作します。GPU 側から移した 11 件のタスクは `tasks/gpu_solver/` にあり、元の `gpu_solver/tasks/` はバックアップとして保持します。移行時には記録内の絶対パスとタスク間シンボリックリンクを中央保存先に更新しました。登録は Git 管理外の `.codex/repositories.local.json` に置きます。GPU 登録で WSL の `/dev/dxg` がある場合は、Codex サンドボックス設定、`nvidia-smi` を含む `/usr/lib/wsl/lib` の PATH、HPC SDK の環境変数を Agent の子プロセスへ渡します。登録先を一覧で開くだけでは、既存タスクの回復処理や移行処理を走らせません。
 
 `POST /api/tasks` は最上位タスクと `dev` からの専用ブランチを作ります。`POST /api/tasks/<id>/children` は親ブランチから子の専用ブランチを作ります。各タスクの `task.json` は `parent_id`、`root_id`、`branch`、作業の状態、コミット ID を持ちます。GUI が管理するタスクの記録は `tasks/` に置き、Git から除外します。
 
