@@ -127,6 +127,7 @@ class RepositoryRegistry:
     def _gpu_environment() -> dict[str, str]:
         """Read the WSL GPU tools and return suitable child process variables."""
         environment = os.environ.copy()
+        environment["PATH"] = f"/usr/lib/wsl/lib:{environment.get('PATH', '')}"
         sdk = Path("/opt/nvidia/hpc_sdk/Linux_x86_64/26.9")
         if os.access(sdk / "compilers/bin/nvfortran", os.X_OK):
             environment["PATH"] = f"{sdk / 'compilers/bin'}:{environment.get('PATH', '')}"
