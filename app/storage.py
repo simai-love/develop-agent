@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from app.record_index import ensure_record_link, remove_record_link
+
 
 TASK_ID = re.compile(r"^[a-f0-9]{12}$")
 MODEL_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$")
@@ -126,6 +128,7 @@ def delete_task(root: Path, task_id: str) -> list[str]:
     """Delete task_id and descendants from root; return the deleted IDs."""
     task_ids = task_subtree(root, task_id)
     for current_id in task_ids:
+        remove_record_link(root, current_id)
         shutil.rmtree(task_dir(root, current_id))
     return task_ids
 
@@ -172,6 +175,7 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
     (directory / "reports").mkdir()
     (directory / "evidence").mkdir()
     (directory / "validation").mkdir()
+    ensure_record_link(root, task_id, title, timestamp)
     return read_task(root, task_id)
 
 

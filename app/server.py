@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.repositories import RepositoryRegistry
+from app.record_index import sync_record_links
 from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, update_task
 from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
@@ -307,6 +308,8 @@ def main() -> None:
     WORKFLOW.migrate_projects()
     WORKFLOW.recover_operations()
     assign_default_models(TASKS_ROOT)
+    sync_record_links(TASKS_ROOT, "task.json", "title")
+    sync_record_links(PROJECTS_ROOT, "project.json", "name")
     print("Develop Agent: http://127.0.0.1:8765", flush=True)
     try:
         server.serve_forever()

@@ -11,7 +11,7 @@ from pathlib import Path
 from app.agent import AgentManager
 from app.evidence import evidence_path, list_evidence, save_evidence
 from app.model_catalog import codex_models
-from app.storage import DEFAULT_CODEX_MODEL, assign_default_models, create_task, read_chat, read_task, set_readiness, update_task
+from app.storage import DEFAULT_CODEX_MODEL, assign_default_models, create_task, list_tasks, read_chat, read_task, set_readiness, update_task
 from app.task_status import display_status
 
 
@@ -232,7 +232,7 @@ class WorkflowTest(unittest.TestCase):
             saved = read_task(tasks, task["id"])
             self.assertEqual(saved["child_proposals"][0]["title"], "検証A")
             self.assertFalse(saved["can_implement"])
-            self.assertEqual(len([item for item in tasks.iterdir() if item.is_dir()]), 1)
+            self.assertEqual(len(list_tasks(tasks)), 1)
 
     def test_evidence_is_task_local_and_safe(self):
         """Return after checking uploaded media and unsafe path rejection."""

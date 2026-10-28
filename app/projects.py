@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from app.record_index import ensure_record_link
 from app.storage import now, write_text
 
 
@@ -34,6 +35,7 @@ def save_project(root: Path, project: dict) -> dict:
     """Write project to root and return the same record."""
     path = project_dir(root, project["id"]) / "project.json"
     write_text(path, json.dumps(project, ensure_ascii=False, indent=2) + "\n")
+    ensure_record_link(root, project["id"], project["name"], project["created_at"])
     return project
 
 

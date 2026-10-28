@@ -14,4 +14,6 @@
 
 `test_project_api.py` は `~/prog` 相当の候補検索APIと、登録済みリポジトリごとのタスク操作を確認します。
 
+`test_record_index.py` は日時・名称付きリンクの作成、既存記録の索引化、IDパスの互換性を確認します。
+
 Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs` で確認します。
