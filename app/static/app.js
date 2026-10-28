@@ -468,7 +468,7 @@ function render() {
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
   $('#complete-button').disabled = migrationPending || task.status === 'completed' || busy || (task.child_count ? !childrenDone || !summaryReady : task.implementation?.state !== 'succeeded' || !task.result.trim());
-  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.commit_pending && !task.child_count ? `${task.parent_id ? '親ブランチ' : 'dev'}へ統合 →` : 'タスクを完了 →';
+  $('#complete-button').textContent = task.status === 'completed' ? '完了済み ✓' : task.branch && task.commit_hash && !task.commit_pending && !task.code_owner && !task.child_count ? `${task.parent_id ? '親ブランチ' : 'dev'}へ統合 →` : 'タスクを完了 →';
   $('#complete-button').title = task.implementation?.state !== 'succeeded' ? 'CLIによる実装が確認されてから完了できます' : '';
   $('#result-actions p').textContent = task.implementation?.validation_outcome
     ? `Agentの検証結果：${outcomeLabels[task.implementation.validation_outcome]}。結果を確認し、目的を達成したと判断したら完了にしてください。`
