@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.git.workspace import GitWorkspace, task_branch_name
 from app.projects import list_projects, new_project, project_dir, read_project, save_project
+from app.record_index import remove_record_link
 from app.storage import create_task, delete_task as remove_task_records, list_tasks, mark_task_completed, now, plan_hash, read_task, save_metadata, task_dir, task_subtree, update_child_proposal, write_text
 
 
@@ -284,7 +285,9 @@ class WorkflowService:
                 record = new_project(project_id, name, slug, branch, base, task_id)
                 return save_project(self.projects_root, record)
             except Exception:
+                remove_record_link(self.tasks_root, task_id)
                 shutil.rmtree(task_dir(self.tasks_root, task_id), ignore_errors=True)
+                remove_record_link(self.projects_root, project_id)
                 shutil.rmtree(project_dir(self.projects_root, project_id), ignore_errors=True)
                 self.git.remove(branch)
                 raise
@@ -351,6 +354,7 @@ class WorkflowService:
                     update_child_proposal(self.tasks_root, parent_id, proposal_id, "approved", child["id"])
                 return child
             except Exception:
+                remove_record_link(self.tasks_root, child_id)
                 shutil.rmtree(task_dir(self.tasks_root, child_id), ignore_errors=True)
                 save_metadata(self.tasks_root, original_parent)
                 if branch:
@@ -538,6 +542,7 @@ class WorkflowService:
             for root_task in [task for task in tasks if task["parent_id"] is None]:
                 self.delete_task(root_task["id"])
             self.git.remove(project["branch"])
+            remove_record_link(self.projects_root, project_id)
             shutil.rmtree(self.projects_root / project_id)
 
     def initialize_legacy_branches(self, root_task_id: str) -> None:

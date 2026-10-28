@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.git.workspace import GitWorkspace, task_branch_name
 from app.projects import list_projects
+from app.record_index import remove_record_link
 from app.storage import create_task, delete_task as remove_records, list_tasks, mark_task_completed, now, plan_hash, read_task, save_metadata, task_dir, task_subtree, update_child_proposal, write_text
 
 
@@ -50,6 +51,7 @@ class TaskWorkflowService:
                 save_metadata(self.tasks_root, task)
                 return read_task(self.tasks_root, task_id)
             except Exception:
+                remove_record_link(self.tasks_root, task_id)
                 shutil.rmtree(task_dir(self.tasks_root, task_id), ignore_errors=True)
                 self.git.remove(branch)
                 raise
@@ -83,6 +85,7 @@ class TaskWorkflowService:
                     update_child_proposal(self.tasks_root, parent_id, proposal_id, "approved", child_id)
                 return read_task(self.tasks_root, child_id)
             except Exception:
+                remove_record_link(self.tasks_root, child_id)
                 shutil.rmtree(task_dir(self.tasks_root, child_id), ignore_errors=True)
                 self.git.remove(branch)
                 raise

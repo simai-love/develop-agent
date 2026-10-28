@@ -47,6 +47,7 @@ class TaskApiTest(unittest.TestCase):
                 with urlopen(request) as response:
                     task = json.load(response)
                 self.assertTrue((central_tasks / "sample" / task["id"] / "task.json").exists())
+                self.assertEqual(len(list((central_tasks / "sample" / "by-name").iterdir())), 1)
                 self.assertFalse((repo / "tasks" / task["id"] / "task.json").exists())
                 with urlopen(base + "/api/tasks?repo=sample") as response:
                     self.assertEqual([item["id"] for item in json.load(response)], [task["id"]])

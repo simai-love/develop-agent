@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent import AgentManager
+from app.record_index import sync_record_links
 from app.storage import write_text
 from app.task_workflow import TaskWorkflowService
 
@@ -87,6 +88,8 @@ class RepositoryRegistry:
                 raise ValueError("登録先は Git リポジトリのルートを指定してください")
             tasks_root = self.tasks_root / repository_id
             projects_root = root / "projects"
+            sync_record_links(tasks_root, "task.json", "title")
+            sync_record_links(projects_root, "project.json", "name")
             workflow = TaskWorkflowService(root, tasks_root, projects_root)
             sandbox = os.environ.get("DEVELOP_AGENT_CODEX_SANDBOX", "danger-full-access" if entry.get("gpu") and Path("/dev/dxg").exists() else "workspace-write")
             process_env = self._gpu_environment() if entry.get("gpu") and Path("/dev/dxg").exists() else None
