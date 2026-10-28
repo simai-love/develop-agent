@@ -113,7 +113,7 @@ class TaskWorkflowService:
         """Reserve task_id's clean branch for its Agent run; return nothing."""
         with self.lock:
             task = read_task(self.tasks_root, task_id)
-            if task["status"] == "completed" or task["commit_hash"]:
+            if task["status"] == "completed":
                 raise ValueError("完了済みの変更は編集できません")
             if not task["code_owner"] and not self.git.clean(self.code_path(task_id)):
                 raise ValueError("作業ブランチの未コミット変更を整理してください")
@@ -172,11 +172,11 @@ class TaskWorkflowService:
             if reports[-1].get("kind") != "summary" or reports[-1].get("summary_basis") != self.summary_basis(task_id):
                 raise ValueError("最新の子タスクを含む総括レポートが必要です")
             return self._merge_preview(task, target)
-        if task["commit_hash"] and not task.get("commit_pending"):
+        paths = self.git.changed(self.code_path(task_id))
+        if task["commit_hash"] and not task.get("commit_pending") and not paths:
             return self._merge_preview(task, target)
         if task["implementation"]["state"] != "succeeded":
             raise ValueError("実装と検証が完了していません")
-        paths = self.git.changed(self.code_path(task_id))
         if not paths:
             if task.get("legacy_completed"):
                 return {"kind": "legacy", "branch": task["branch"], "head": self.git.head(task["branch"]), "paths": [], "report_number": reports[-1]["number"]}

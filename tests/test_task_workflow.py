@@ -139,6 +139,27 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertEqual(read_task(self.service.tasks_root, second["id"])["status"], "completed")
         self.assertEqual((self.repo / "shared.txt").read_text(), "first\nsecond\n")
 
+    def test_committed_task_can_be_edited_after_failed_merge(self):
+        """Reopen a committed, unmerged task for fixes and commit the new changes before merging."""
+        task = self.ready_task("再修正", {"feature.txt": "done\n"})
+        operations = self.service.begin_agent_completion(task["id"], self.service.completion_preview(task["id"]))
+        git("add", "feature.txt", cwd=self.service.code_path(task["id"]))
+        git("commit", "-q", "-m", "実装", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(task["id"]))
+        with self.assertRaisesRegex(ValueError, "マージを作成しませんでした"):
+            self.service.finish_agent_completion(operations)
+        self.service.abandon_agent_merge(operations["merge"])
+        self.service.claim_code(task["id"])
+        (self.service.code_path(task["id"]) / "fix.txt").write_text("fix\n", encoding="utf-8")
+        preview = self.service.completion_preview(task["id"])
+        self.assertEqual((preview["kind"], preview["paths"]), ("commit", ["fix.txt"]))
+        operations = self.service.begin_agent_completion(task["id"], preview)
+        git("add", "fix.txt", cwd=self.service.code_path(task["id"]))
+        git("commit", "-q", "-m", "修正", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=self.service.code_path(task["id"]))
+        self.agent_merge(operations["merge"])
+        task = self.service.finish_agent_completion(operations)
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(len(task["commit_hashes"]), 2)
+
     def test_restart_finishes_agent_commit_and_merge(self):
         """Finish commits and an Agent merge recorded in Git before a server restart."""
         task = self.ready_task("再起動", {"feature.txt": "done\n"})
