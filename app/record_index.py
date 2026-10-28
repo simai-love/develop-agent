@@ -19,15 +19,30 @@ def readable_record_name(title: str, record_id: str, created_at: str) -> str:
     return f"{created:%Y-%m-%d_%H%M}_{label}_{record_id}"
 
 
-def ensure_record_link(root: Path, record_id: str, title: str, created_at: str) -> Path:
-    """Create a readable link to an ID directory and return its path."""
+def find_record_directory(root: Path, record_id: str, filename: str) -> Path:
+    """Return an existing dated or legacy ID directory for a record ID."""
+    legacy = root / record_id
+    if (legacy / filename).is_file():
+        return legacy
+    if root.is_dir():
+        for directory in root.iterdir():
+            if (directory.is_dir() and not directory.is_symlink()
+                    and directory.name.endswith(f"_{record_id}")
+                    and (directory / filename).is_file()):
+                return directory
+    return legacy
+
+
+def ensure_record_link(root: Path, record_id: str, title: str, created_at: str, directory_name: str | None = None) -> Path:
+    """Create a readable link to a record directory and return its path."""
     index = root / "by-name"
     index.mkdir(exist_ok=True)
-    existing = next((path for path in index.iterdir() if path.is_symlink() and path.name.endswith(f"_{record_id}")), None)
+    existing = next((path for path in index.iterdir()
+                     if path.is_symlink() and path.name.endswith(f"_{record_id}")), None)
     if existing:
         return existing
     link = index / readable_record_name(title, record_id, created_at)
-    link.symlink_to(Path("..") / record_id, target_is_directory=True)
+    link.symlink_to(Path("..") / (directory_name or record_id), target_is_directory=True)
     return link
 
 
@@ -41,11 +56,13 @@ def remove_record_link(root: Path, record_id: str) -> None:
 
 
 def sync_record_links(root: Path, filename: str, title_key: str) -> None:
-    """Add readable links for ID records in root without changing their storage paths."""
+    """Add readable links for dated and legacy records in root."""
     if not root.exists():
         return
     for directory in root.iterdir():
         record_file = directory / filename
-        if directory.is_dir() and RECORD_ID.fullmatch(directory.name) and record_file.is_file():
+        if directory.is_dir() and not directory.is_symlink() and record_file.is_file():
             record = json.loads(record_file.read_text(encoding="utf-8"))
-            ensure_record_link(root, record["id"], record[title_key], record["created_at"])
+            record_id = record["id"]
+            if RECORD_ID.fullmatch(record_id) and (directory.name == record_id or directory.name.endswith(f"_{record_id}")):
+                ensure_record_link(root, record_id, record[title_key], record["created_at"], directory.name)

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from app.agent import AgentManager
-from app.storage import append_report, read_chat, read_task, report_draft_path, set_implementation, set_readiness, update_task, write_text
+from app.storage import append_report, read_chat, read_task, report_draft_path, set_implementation, set_readiness, task_dir, update_task, write_text
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService
 
@@ -273,7 +273,7 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertIn(f"→ dev ({task['merge_hash'][:10]})", chat[-1]["content"])
         self.assertNotIn("GUIが削除", chat[-1]["content"])
         self.assertIn("完了しました", chat[-1]["content"])
-        self.assertFalse((self.service.tasks_root / task["id"] / "diagnostics").exists())
+        self.assertFalse((task_dir(self.service.tasks_root, task["id"]) / "diagnostics").exists())
 
     def test_partial_commit_run_can_be_retried(self):
         """Keep a verified partial commit, then finish the remaining commit and merge on retry."""
@@ -297,7 +297,7 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertIn("方針: なし", chat[-2]["content"])
         self.assertIn("コミット・統合に失敗しました: 認証に失敗しました", chat[-1]["content"])
         self.assertIn("作成したコミット: なし", chat[-1]["content"])
-        diagnostics = list((self.service.tasks_root / task["id"] / "diagnostics").glob("completion-*.json"))
+        diagnostics = list((task_dir(self.service.tasks_root, task["id"]) / "diagnostics").glob("completion-*.json"))
         self.assertEqual(len(diagnostics), 1)
         self.assertIn("認証に失敗しました", json.loads(diagnostics[0].read_text(encoding="utf-8"))["stdout_tail"])
 
@@ -326,7 +326,7 @@ class TaskWorkflowTest(unittest.TestCase):
         project = legacy.create_project("旧制度", "legacy", "親")
         parent = read_task(self.service.tasks_root, project["first_task_id"])
         child = legacy.create_child(parent["id"], "子")
-        before = (self.service.tasks_root / child["id"] / "task.json").read_text(encoding="utf-8")
+        before = (task_dir(self.service.tasks_root, child["id"]) / "task.json").read_text(encoding="utf-8")
         self.service.migrate_projects()
         migrated_parent = read_task(self.service.tasks_root, parent["id"])
         migrated_child = read_task(self.service.tasks_root, child["id"])

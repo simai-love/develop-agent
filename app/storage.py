@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from app.record_index import ensure_record_link, remove_record_link
+from app.record_index import ensure_record_link, find_record_directory, readable_record_name, remove_record_link
 
 
 TASK_ID = re.compile(r"^[a-f0-9]{12}$")
@@ -24,10 +24,10 @@ def now() -> str:
 
 
 def task_dir(root: Path, task_id: str) -> Path:
-    """Return the directory for a validated task ID under root."""
+    """Return the dated or legacy directory for a validated task ID under root."""
     if not TASK_ID.fullmatch(task_id):
         raise ValueError("Invalid task ID")
-    return root / task_id
+    return find_record_directory(root, task_id, "task.json")
 
 
 def write_text(path: Path, content: str) -> None:
@@ -91,9 +91,12 @@ def list_tasks(root: Path) -> list[dict]:
         return []
     tasks = []
     for directory in root.iterdir():
-        if directory.is_dir() and TASK_ID.fullmatch(directory.name) and (directory / "task.json").exists():
-            task = read_task(root, directory.name)
-            tasks.append({key: value for key, value in task.items() if key not in ("plan", "result", "can_implement", "reports")})
+        if directory.is_dir() and not directory.is_symlink() and (directory / "task.json").is_file():
+            metadata = json.loads((directory / "task.json").read_text(encoding="utf-8"))
+            task_id = metadata.get("id", "")
+            if TASK_ID.fullmatch(task_id) and (directory.name == task_id or directory.name.endswith(f"_{task_id}")):
+                task = read_task(root, task_id)
+                tasks.append({key: value for key, value in task.items() if key not in ("plan", "result", "can_implement", "reports")})
     return sorted(tasks, key=lambda task: task["created_at"])
 
 
@@ -141,9 +144,13 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
     if parent_id is not None:
         read_task(root, parent_id)
     task_id = task_id or uuid4().hex[:12]
-    directory = task_dir(root, task_id)
-    directory.mkdir(parents=True)
+    if not TASK_ID.fullmatch(task_id):
+        raise ValueError("Invalid task ID")
+    if (task_dir(root, task_id) / "task.json").exists():
+        raise FileExistsError(f"Task ID already exists: {task_id}")
     timestamp = now()
+    directory = root / readable_record_name(title, task_id, timestamp)
+    directory.mkdir(parents=True)
     task = {
         "id": task_id,
         "parent_id": parent_id,
@@ -175,7 +182,7 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
     (directory / "reports").mkdir()
     (directory / "evidence").mkdir()
     (directory / "validation").mkdir()
-    ensure_record_link(root, task_id, title, timestamp)
+    ensure_record_link(root, task_id, title, timestamp, directory.name)
     return read_task(root, task_id)
 
 

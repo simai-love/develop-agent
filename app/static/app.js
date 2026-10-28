@@ -425,8 +425,8 @@ function render() {
   $('#section-description').textContent = isPlan
     ? '目的から仮説、要件、実装手順までをMarkdownで整理します。'
     : '検証のたびに増えるレポートを開いて、結論と根拠を確認できます。';
-  $('#file-path').textContent = `tasks/${task.id}/plan.md`;
-  $('#task-path').textContent = `tasks/${task.id}/`;
+  $('#file-path').textContent = `${task.storage_path}/plan.md`;
+  $('#task-path').textContent = `${task.storage_path}/`;
   $('#commit-history').textContent = task.commit_hashes?.length
     ? `このタスクのコミット: ${task.commit_hashes.map((hash) => hash.slice(0, 10)).join('、')}`
     : '';
@@ -566,7 +566,7 @@ function renderReports() {
     body.className = 'report-body';
     const path = document.createElement('div');
     path.className = 'report-path';
-    path.textContent = `tasks/${state.task.id}/${report.file}`;
+    path.textContent = `${state.task.storage_path}/${report.file}`;
     body.append(path, renderMarkdown(report.content, state.task.id));
     card.append(summary, body);
     list.append(card);

@@ -11,7 +11,7 @@ from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.repositories import RepositoryRegistry
 from app.record_index import sync_record_links
-from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, update_task
+from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, task_dir, update_task
 from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService as LegacyWorkflowService
@@ -66,7 +66,7 @@ class Handler(BaseHTTPRequestHandler):
         full_task = task if "plan" in task else read_task(self.tasks_root, task["id"])
         children = self.workflow.children(task["id"])
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
-        return {**task, "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(self.tasks_root, task["id"], "plan"), active, children)}
+        return {**task, "storage_path": str(task_dir(self.tasks_root, task["id"])), "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(self.tasks_root, task["id"], "plan"), active, children)}
 
     def do_GET(self) -> None:
         """Return a task list, one task, or a static GUI asset."""
