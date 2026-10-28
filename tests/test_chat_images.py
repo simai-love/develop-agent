@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from app.agent import AgentManager
 from app.evidence import save_evidence
-from app.storage import create_task, read_chat, update_task
+from app.storage import create_task, read_chat, task_dir, update_task
 
 
 class ChatImageTests(unittest.TestCase):
@@ -64,14 +64,14 @@ class ChatImageTests(unittest.TestCase):
         """Pass the selected image to Codex and retain its message attachment."""
         command, prompt = self.run_image_chat("codex")
         self.assertIn("--image", command)
-        self.assertIn(str(self.tasks / self.task["id"] / "evidence" / self.image["name"]), command)
+        self.assertIn(str(task_dir(self.tasks, self.task["id"]) / "evidence" / self.image["name"]), command)
         self.assertIn(self.image["name"], prompt)
 
     def test_claude_receives_image_path(self):
         """Tell Claude Code to read the selected image from task storage."""
         command, prompt = self.run_image_chat("claude")
         self.assertIn("--print", command)
-        self.assertIn(str(self.tasks / self.task["id"] / "evidence" / self.image["name"]), prompt)
+        self.assertIn(str(task_dir(self.tasks, self.task["id"]) / "evidence" / self.image["name"]), prompt)
         self.assertIn("Readツール", prompt)
 
     def test_chat_rejects_other_files_and_missing_images(self):

@@ -11,7 +11,7 @@ from pathlib import Path
 from app.agent import AgentManager
 from app.evidence import evidence_path, list_evidence, save_evidence
 from app.model_catalog import codex_models
-from app.storage import DEFAULT_CODEX_MODEL, assign_default_models, create_task, list_tasks, read_chat, read_task, set_readiness, update_task
+from app.storage import DEFAULT_CODEX_MODEL, assign_default_models, create_task, list_tasks, read_chat, read_task, set_readiness, task_dir, update_task
 from app.task_status import display_status
 
 
@@ -69,8 +69,8 @@ class WorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             task = create_task(root, "画像確認")
-            (root / task["id"] / "result.md").write_text("結果\n" + "説明" * 10000, encoding="utf-8")
-            evidence = root / task["id"] / "evidence"
+            (task_dir(root, task["id"]) / "result.md").write_text("結果\n" + "説明" * 10000, encoding="utf-8")
+            evidence = task_dir(root, task["id"]) / "evidence"
             for index in range(80):
                 (evidence / f"image-{index:03}.png").write_bytes(b"x")
             prompt = AgentManager(root, root)._chat_prompt(task["id"], "result")
@@ -118,7 +118,7 @@ class WorkflowTest(unittest.TestCase):
             update_task(root, custom["id"], {"model": "gpt-6-astra"})
             completed = create_task(root, "完了済み")
             update_task(root, completed["id"], {"model": ""})
-            metadata_path = root / completed["id"] / "task.json"
+            metadata_path = task_dir(root, completed["id"]) / "task.json"
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             metadata["status"] = "completed"
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -137,7 +137,10 @@ class WorkflowTest(unittest.TestCase):
             child = create_task(root, "子", parent["id"])
             grandchild = create_task(root, "孫", child["id"])
             sibling = create_task(root, "別の開発項目")
-            (root / child["id"] / "evidence" / "plot.png").write_bytes(b"plot")
+            (task_dir(root, child["id"]) / "evidence" / "plot.png").write_bytes(b"plot")
+            parent_path = task_dir(root, parent["id"])
+            child_path = task_dir(root, child["id"])
+            sibling_path = task_dir(root, sibling["id"])
             manager = AgentManager(root, project)
             manager.active_tasks.add(grandchild["id"])
             with self.assertRaises(ValueError):
@@ -145,9 +148,9 @@ class WorkflowTest(unittest.TestCase):
             manager.active_tasks.clear()
             deleted = manager.remove_task(parent["id"])
             self.assertEqual(deleted, [grandchild["id"], child["id"], parent["id"]])
-            self.assertFalse((root / parent["id"]).exists())
-            self.assertFalse((root / child["id"]).exists())
-            self.assertTrue((root / sibling["id"]).exists())
+            self.assertFalse(parent_path.exists())
+            self.assertFalse(child_path.exists())
+            self.assertTrue(sibling_path.exists())
 
     def test_model_picker_reads_visible_codex_models(self):
         """Check app-server handshake and its picker-visible model output."""
@@ -239,7 +242,7 @@ class WorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             task = create_task(root, "画像確認")
-            self.assertTrue((root / task["id"] / "validation").is_dir())
+            self.assertTrue((task_dir(root, task["id"]) / "validation").is_dir())
             saved = save_evidence(root, task["id"], "plot.png", b"image-data")
             self.assertEqual(saved["kind"], "image")
             self.assertEqual(len(list_evidence(root, task["id"])), 1)
@@ -299,7 +302,7 @@ class WorkflowTest(unittest.TestCase):
             manager.cli_paths["claude"] = str(cli)
             run = manager.start_chat(task["id"], "plan", "計画してください")
             self._await_run(manager, run["id"], "failed")
-            diagnostic = tasks / task["id"] / "diagnostics" / f"claude-{run['id']}.json"
+            diagnostic = task_dir(tasks, task["id"]) / "diagnostics" / f"claude-{run['id']}.json"
             self.assertTrue(diagnostic.exists())
             self.assertIn("指定形式のJSON応答がありません", read_chat(tasks, task["id"], "plan")[-1]["content"])
             self.assertIn(str(diagnostic), manager.get_run(run["id"])["message"])
@@ -357,7 +360,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertIn("src/change.py", task["implementation"]["changed_files"])
             self.assertIn("改善を確認", task["result"])
             self.assertEqual(len(task["reports"]), 1)
-            self.assertTrue((tasks / task["id"] / "reports" / "0001.md").exists())
+            self.assertTrue((task_dir(tasks, task["id"]) / "reports" / "0001.md").exists())
             self._await_run(manager, manager.start_chat(task["id"], "result", "画像でも確かめて")["id"])
             task = read_task(tasks, task["id"])
             self.assertIn("追加で画像を確認", task["result"])
@@ -427,7 +430,7 @@ class WorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             task = create_task(root, "既存タスク")
-            (root / task["id"] / "result.md").write_text("# 以前の検証結果", encoding="utf-8")
+            (task_dir(root, task["id"]) / "result.md").write_text("# 以前の検証結果", encoding="utf-8")
             task = read_task(root, task["id"])
             self.assertEqual(task["reports"][0]["file"], "result.md")
             self.assertEqual(task["result"], "# 以前の検証結果")

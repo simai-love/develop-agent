@@ -10,7 +10,7 @@ from pathlib import Path
 from app.agent import AgentManager
 from app.git.workspace import task_branch_name
 from app.projects import list_projects
-from app.storage import append_report, create_task, plan_hash, read_task, report_draft_path, save_child_proposals, save_metadata, set_readiness, write_text
+from app.storage import append_report, create_task, plan_hash, read_task, report_draft_path, save_child_proposals, save_metadata, set_readiness, task_dir, write_text
 from app.workflow import WorkflowService
 
 
@@ -65,7 +65,7 @@ class ProjectWorkflowTest(unittest.TestCase):
             parent_id = project["first_task_id"]
             children = [service.create_child(parent_id, title) for title in ("子A", "子B")]
             for child in children:
-                write_text(service.tasks_root / child["id"] / "plan.md", "# 計画\n")
+                write_text(task_dir(service.tasks_root, child["id"]) / "plan.md", "# 計画\n")
                 set_readiness(service.tasks_root, child["id"], True, "# 計画\n", "実装可能")
             service.prepare_parallel_children(parent_id, [child["id"] for child in children])
             self.assertNotEqual(service.code_path(children[0]["id"]), service.code_path(children[1]["id"]))
@@ -89,7 +89,7 @@ class ProjectWorkflowTest(unittest.TestCase):
             conflicting = [service.create_child(parent_id, title) for title in ("子C", "子D")]
             for index, child in enumerate(conflicting):
                 task_id = child["id"]
-                write_text(service.tasks_root / task_id / "plan.md", "# 計画\n")
+                write_text(task_dir(service.tasks_root, task_id) / "plan.md", "# 計画\n")
                 set_readiness(service.tasks_root, task_id, True, "# 計画\n", "実装可能")
             service.prepare_parallel_children(parent_id, [child["id"] for child in conflicting])
             for index, child in enumerate(conflicting):
@@ -124,7 +124,7 @@ class ProjectWorkflowTest(unittest.TestCase):
             parent_id = project["first_task_id"]
             children = [service.create_child(parent_id, title) for title in ("子A", "子B")]
             for child in children:
-                write_text(service.tasks_root / child["id"] / "plan.md", "# 計画\n")
+                write_text(task_dir(service.tasks_root, child["id"]) / "plan.md", "# 計画\n")
                 set_readiness(service.tasks_root, child["id"], True, "# 計画\n", "実装可能")
             cli = Path(temporary) / "fake-codex"
             cli.write_text(
@@ -153,7 +153,7 @@ class ProjectWorkflowTest(unittest.TestCase):
                 time.sleep(0.02)
             self.assertEqual([manager.get_run(run["id"])["state"] for run in runs], ["succeeded", "succeeded"])
             for child in children:
-                task_path = service.tasks_root / child["id"]
+                task_path = task_dir(service.tasks_root, child["id"])
                 self.assertIn("今回の実行への追加指示（計画は変更しない）:\n互換性を確認", (task_path / "received-instruction.txt").read_text(encoding="utf-8"))
                 self.assertEqual(read_task(service.tasks_root, child["id"])["plan"], "# 計画\n")
             self.assertFalse((service.code_path(parent_id) / "feature.txt").exists())

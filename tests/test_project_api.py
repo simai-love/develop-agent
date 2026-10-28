@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from app import server
 from app.agent import AgentManager
 from app.repositories import RepositoryRegistry
+from app.storage import task_dir
 from app.task_workflow import TaskWorkflowService
 
 
@@ -46,7 +47,8 @@ class TaskApiTest(unittest.TestCase):
                 request = Request(base + "/api/tasks?repo=sample", data=json.dumps({"title": "別リポジトリのタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     task = json.load(response)
-                self.assertTrue((central_tasks / "sample" / task["id"] / "task.json").exists())
+                self.assertTrue((task_dir(central_tasks / "sample", task["id"]) / "task.json").exists())
+                self.assertEqual(task["storage_path"], str(task_dir(central_tasks / "sample", task["id"])))
                 self.assertEqual(len(list((central_tasks / "sample" / "by-name").iterdir())), 1)
                 self.assertFalse((repo / "tasks" / task["id"] / "task.json").exists())
                 with urlopen(base + "/api/tasks?repo=sample") as response:
@@ -79,7 +81,7 @@ class TaskApiTest(unittest.TestCase):
                 request = Request(base + "/api/tasks?repo=next-repo", data=json.dumps({"title": "追加先のタスク"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
                 with urlopen(request) as response:
                     next_task = json.load(response)
-                self.assertTrue((central_tasks / "next-repo" / next_task["id"] / "task.json").exists())
+                self.assertTrue((task_dir(central_tasks / "next-repo", next_task["id"]) / "task.json").exists())
             finally:
                 http.shutdown()
                 http.server_close()

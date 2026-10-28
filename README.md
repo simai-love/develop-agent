@@ -51,4 +51,4 @@ bash scripts/run.sh
 | 文書を直す人 | [docs/](docs/README.md) | 利用ガイドと設計資料の原稿 |
 | 画面例を更新する人 | [docs/screenshots/](docs/screenshots/README.md) | サンプル画面と再現条件 |
 
-実行中のタスクの記録は、このアプリの `tasks/` に保存され、Git 管理から除外されます。日時と名称から探すには `tasks/by-name/`（追加リポジトリは `tasks/<リポジトリID>/by-name/`）を開きます。以前の `projects/` は移行前の控えとして残り、`projects/by-name/` から探せます。各ファイルの用途は[利用ガイドの「保存先と制約」](docs/user-guide.md#保存先と制約)を参照してください。
+実行中のタスクの記録は、このアプリの `tasks/` に保存され、Git 管理から除外されます。新規タスクのフォルダ名は `YYYY-MM-DD_HHMM_タスク名_ID` です。既存のID名フォルダはそのまま使えます。日時と名称から探すには `tasks/by-name/`（追加リポジトリは `tasks/<リポジトリID>/by-name/`）も開けます。以前の `projects/` は移行前の控えとして残り、`projects/by-name/` から探せます。各ファイルの用途は[利用ガイドの「保存先と制約」](docs/user-guide.md#保存先と制約)を参照してください。
