@@ -11,8 +11,14 @@ from app.storage import task_dir
 MAX_EVIDENCE_BYTES = 100 * 1024 * 1024
 MAX_CHAT_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_CHAT_IMAGES = 4
-ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".csv", ".json", ".pdf"}
+ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".csv", ".json", ".pdf", ".log", ".txt"}
+mimetypes.add_type("text/plain", ".log")
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def evidence_rule() -> str:
+    """Return the evidence filename and extension rule as prompt text."""
+    return f"evidence/のファイル名は英数字・.・_・-だけを使い、拡張子は{'、'.join(sorted(ALLOWED_EXTENSIONS))}のいずれかにしてください。それ以外の形式はevidence_filesに含めないでください。"
 
 
 def evidence_path(root: Path, task_id: str, name: str) -> Path:

@@ -124,7 +124,8 @@ class Handler(BaseHTTPRequestHandler):
                     file_path = evidence_path(self.tasks_root, parts[2], parts[4])
                     size = file_path.stat().st_size
                     self.send_response(200)
-                    self.send_header("Content-Type", mimetypes.guess_type(file_path.name)[0] or "application/octet-stream")
+                    content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+                    self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type == "text/plain" else content_type)
                     self.send_header("X-Content-Type-Options", "nosniff")
                     self.send_header("Content-Length", str(size))
                     self.end_headers()

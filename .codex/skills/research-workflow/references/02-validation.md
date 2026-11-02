@@ -18,7 +18,7 @@
 
 ## 検証資料
 
-検証用の関数やスクリプトは `tasks/<id>/validation/`、生成した画像・動画・測定データは `tasks/<id>/evidence/` に保存する。証拠ファイル名には英数字・`.`・`_`・`-` を使い、画像は PNG/JPEG/WebP/GIF、動画は MP4/WebM/MOV、データは CSV/JSON/PDF にする。画像を**自分で生成したら自分で開き**、欠け・崩れ・文字の読みやすさを確認する。その図が何を示すか、判断にどう関係するかを今回のレポートに書く。開いて確認できなかった画像や動画は、その旨を明記する。GUI が原稿を `reports/` に移すため、本文中の画像は `![説明](../evidence/<filename>)` で表示し、動画は `[説明](../evidence/<filename>)` でリンクする。JSON の `evidence_files` はタスク直下からの `evidence/<filename>` を使う。
+検証用の関数やスクリプトは `tasks/<id>/validation/`、生成した画像・動画・測定データは `tasks/<id>/evidence/` に保存する。証拠ファイル名には英数字・`.`・`_`・`-` を使い、画像は PNG/JPEG/WebP/GIF、動画は MP4/WebM/MOV、データは CSV/JSON/PDF/LOG/TXT にする。画像を**自分で生成したら自分で開き**、欠け・崩れ・文字の読みやすさを確認する。その図が何を示すか、判断にどう関係するかを今回のレポートに書く。開いて確認できなかった画像や動画は、その旨を明記する。GUI が原稿を `reports/` に移すため、本文中の画像は `![説明](../evidence/<filename>)` で表示し、動画は `[説明](../evidence/<filename>)` でリンクする。JSON の `evidence_files` はタスク直下からの `evidence/<filename>` を使う。
 
 ## JSON 応答
 

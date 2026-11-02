@@ -246,6 +246,8 @@ class WorkflowTest(unittest.TestCase):
             saved = save_evidence(root, task["id"], "plot.png", b"image-data")
             self.assertEqual(saved["kind"], "image")
             self.assertEqual(len(list_evidence(root, task["id"])), 1)
+            (task_dir(root, task["id"]) / "evidence" / "run.log").write_text("step 1", encoding="utf-8")
+            self.assertIn("run.log", {entry["name"] for entry in list_evidence(root, task["id"])})
             with self.assertRaises(ValueError):
                 evidence_path(root, task["id"], "../AGENTS.md")
 
