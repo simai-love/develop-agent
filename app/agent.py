@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.agent_stream import run_streamed
 from app.claude_response import read_claude_response, save_diagnostic
-from app.evidence import list_evidence, validate_chat_images
+from app.evidence import evidence_rule, list_evidence, validate_chat_images
 from app.model_catalog import claude_models, codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
@@ -576,6 +576,7 @@ class AgentManager:
                 "コードを変更した場合は、JSONのcommit_messageに簡潔な日本語のコミットメッセージ案を書いてください。"
                 "新しい結果が得られた場合は、今回分だけの独立したレポートを report-draft.md に書いてください。"
                 "過去のレポートは編集しないでください。結果がまだない場合はレポートを書かず、チャットで理由を説明してください。"
+                f"{evidence_rule()}"
             )
             references = "references/02-validation.md と assets/result-template.md"
         return (
@@ -600,6 +601,7 @@ class AgentManager:
             "日本語で応答してください。以下の承認済み計画に従い、このリポジトリで実際にコードを変更してください。"
             "コード変更後、そのまま計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.md、"
             "検証用スクリプトはvalidation/、画像・動画・測定データはevidence/に保存してください。"
+            f"{evidence_rule()}"
             "生成した画像は自分で開いて体裁を確認し、内容の解釈をreport-draft.mdに書いてください。"
             "JSONのcommit_messageに今回の変更を表す簡潔な日本語のコミットメッセージ案を書いてください。"
             "この実行はタスクの完了判断ではありません。Gitコミットやマージは行わないでください。"
