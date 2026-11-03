@@ -1089,6 +1089,7 @@ button:disabled {
 .previewable-image:focus-visible { outline:2px solid #a6dfa9; outline-offset:3px }
 .image-preview-dialog {
   position:fixed;
+  width:max-content;
   max-width:calc(100vw - 32px);
   max-height:calc(100vh - 32px);
   padding:42px 16px 16px;
