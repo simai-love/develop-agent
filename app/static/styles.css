@@ -1085,6 +1085,23 @@ button:disabled {
 }
 .chat-message-images { margin-top:8px }
 .chat-message-images img { width:110px; height:110px }
+.previewable-image { cursor:zoom-in }
+.previewable-image:focus-visible { outline:2px solid #a6dfa9; outline-offset:3px }
+.image-preview-dialog {
+  position:fixed;
+  max-width:calc(100vw - 32px);
+  max-height:calc(100vh - 32px);
+  padding:42px 16px 16px;
+  border:1px solid #526a56;
+  border-radius:8px;
+  background:#1b211c;
+  color:#e8e9e5;
+  text-align:center;
+}
+.image-preview-dialog::backdrop { background:rgba(0,0,0,.82) }
+.image-preview-dialog img { display:block; max-width:calc(100vw - 64px); max-height:calc(100vh - 125px); object-fit:contain }
+.image-preview-dialog p { margin:10px 0 0; font-size:12px; overflow-wrap:anywhere }
+#close-image-preview { position:absolute; top:8px; right:10px; border:0; background:transparent; color:#e8e9e5; font-size:25px; line-height:1 }
 .chat-compose textarea {
   height:51px;
   resize:none;
