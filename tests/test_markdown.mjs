@@ -7,10 +7,14 @@ class FakeNode {
     this.tagName = tagName.toUpperCase();
     this.children = [];
     this.value = value;
+    this.attributes = new Map();
   }
 
   /** Append children to this node and return nothing. */
   append(...children) { this.children.push(...children); }
+
+  /** Store a named attribute value and return nothing. */
+  setAttribute(name, value) { this.attributes.set(name, value); }
 
   /** Replace child content with a text value and return nothing. */
   set textContent(value) { this.children = []; this.value = value; }
@@ -44,6 +48,9 @@ assert.equal(descendants(report, 'table').length, 1);
 assert.equal(descendants(report, 'code')[0].textContent, '測定値');
 assert.equal(descendants(report, 'img')[0].src, '/api/tasks/abcdef123456/evidence/plot.png');
 assert.equal(descendants(report, 'img')[0].loading, 'lazy');
+assert.equal(descendants(report, 'img')[0].className, 'previewable-image');
+assert.equal(descendants(report, 'img')[0].tabIndex, 0);
+assert.equal(descendants(report, 'img')[0].attributes.get('role'), 'button');
 
 setEvidenceRepository('gpu_solver');
 const gpuReport = renderMarkdown('![GPU結果](../evidence/result.png)', 'abcdef123456');

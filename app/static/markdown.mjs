@@ -36,6 +36,10 @@ function appendInline(parent, value, taskId) {
         image.src = href;
         image.alt = match[2];
         image.loading = 'lazy';
+        image.className = 'previewable-image';
+        image.tabIndex = 0;
+        image.setAttribute('role', 'button');
+        image.setAttribute('aria-label', `${match[2]}を拡大`);
         parent.append(image);
       } else {
         const link = document.createElement('a');

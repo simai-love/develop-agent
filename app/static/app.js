@@ -23,6 +23,10 @@ function renderChatAttachments() {
     const image = document.createElement('img');
     image.src = item.url;
     image.alt = item.file.name;
+    image.className = 'previewable-image';
+    image.tabIndex = 0;
+    image.setAttribute('role', 'button');
+    image.setAttribute('aria-label', `${item.file.name}を拡大`);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.textContent = '×';
@@ -45,6 +49,16 @@ function clearChatImages() {
   chatImages = [];
   $('#chat-image-input').value = '';
   renderChatAttachments();
+}
+
+function openImagePreview(image) {
+  /** Show image in the preview dialog and return nothing. */
+  const dialog = $('#image-preview-dialog');
+  const preview = $('#image-preview');
+  preview.src = image.currentSrc || image.src;
+  preview.alt = image.alt;
+  $('#image-preview-caption').textContent = image.alt;
+  dialog.showModal();
 }
 
 function addChatImages(files) {
@@ -617,8 +631,10 @@ function renderEvidence() {
       const image = document.createElement('img');
       image.src = url;
       image.alt = entry.name;
+      image.className = 'previewable-image';
       image.loading = 'lazy';
       image.decoding = 'async';
+      link.setAttribute('aria-label', `${entry.name}を拡大`);
       link.append(image);
       card.append(link);
     } else if (entry.kind === 'video') {
@@ -676,7 +692,9 @@ function renderChat() {
         const image = document.createElement('img');
         image.src = link.href;
         image.alt = name;
+        image.className = 'previewable-image';
         image.loading = 'lazy';
+        link.setAttribute('aria-label', `${name}を拡大`);
         link.append(image);
         gallery.append(link);
       }
@@ -950,6 +968,24 @@ function openDelete(taskId = state.task?.id) {
 
 function bindEvents() {
   /** Attach actions to task, editor, and dialog controls; return nothing. */
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const image = target.closest('img.previewable-image') || target.closest('a')?.querySelector(':scope > img.previewable-image');
+    if (!image) return;
+    event.preventDefault();
+    openImagePreview(image);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!(event.target instanceof HTMLImageElement) || !event.target.matches('img.previewable-image[role="button"]')) return;
+    event.preventDefault();
+    openImagePreview(event.target);
+  });
+  $('#close-image-preview').addEventListener('click', () => $('#image-preview-dialog').close());
+  $('#image-preview-dialog').addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
   let pendingCommit = null;
   $('#repository-select').addEventListener('change', async (event) => {
     const previous = state.repository;
