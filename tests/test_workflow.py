@@ -50,7 +50,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(manager.get_run(run["id"])["state"], "cancelled")
             self.assertNotIn(task["id"], manager.active_tasks)
             self.assertIn("中断", read_chat(tasks_root, task["id"], "plan")[-1]["content"])
-            self.assertEqual(display_status(read_task(tasks_root, task["id"]), [], False)["label"], "中断")
+            self.assertEqual(display_status(read_task(tasks_root, task["id"]), [], False)["detail"], "中断しました。変更を確認して再実行")
 
     def test_implementation_instruction_is_added_without_changing_plan(self):
         """Check a one-run instruction enters the prompt and leaves the plan intact."""
@@ -86,17 +86,17 @@ class WorkflowTest(unittest.TestCase):
             task = create_task(root, "状態確認")
             self.assertEqual(display_status(task, [], False)["key"], "not-started")
             questions = [{"role": "assistant", "questions": [{"prompt": "対象は？"}]}]
-            self.assertEqual(display_status(task, questions, False)["detail"], "質問に回答")
+            self.assertEqual(display_status(task, questions, False)["label"], "質問あり")
             self.assertEqual(display_status(task, questions, True)["key"], "running")
             plan = "# 計画\n改善する"
             update_task(root, task["id"], {"plan": plan})
             ready = set_readiness(root, task["id"], True, plan, "実装可能")
-            self.assertEqual(display_status(ready, questions, False)["detail"], "実装を開始")
+            self.assertEqual(display_status(ready, questions, False)["label"], "承認待ち")
             ready["last_run_cancelled"] = True
-            self.assertEqual(display_status(ready, questions, False)["label"], "中断")
+            self.assertEqual(display_status(ready, questions, False)["label"], "確認待ち")
             ready["last_run_cancelled"] = False
             ready["status"] = "verifying"
-            self.assertEqual(display_status(ready, questions, False)["detail"], "検証結果を確認")
+            self.assertEqual(display_status(ready, questions, False)["label"], "検証中")
             ready["status"] = "completed"
             self.assertEqual(display_status(ready, questions, False)["key"], "completed")
 

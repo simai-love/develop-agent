@@ -16,6 +16,9 @@
 | `app/storage.py`・`app/evidence.py` | タスクと検証資料の保存 |
 | `app/file_browser.py`・`app/static/files.mjs` | プロジェクト内ファイルの閲覧（読み取り専用） |
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
+| `app/home.py`・`app/memos.py`・`app/plan_approval.py` | ホームの集計、メモ、担当 Agent 設定、計画の承認 |
+| `app/scheduler.py`・`app/nightly.py`・`app/daily_report.py` | 0:00 の夜間実行と 6:00 の日報 |
+| `app/task_status.py` | タスクの段階表示 |
 
 リポジトリ登録画面の候補は `/api/repository-candidates` から取得します。`~/prog` 直下のGitルートのうち、ローカルの `dev` ブランチを持ち、まだ登録されていないものだけを返します。手入力での登録も従来どおり可能です。
 
@@ -64,6 +67,33 @@ HTML の文書は `app/static/html-document.mjs` が表示します。`<script>`
 `task` を指定するとタスクのブランチの worktree（無ければリポジトリ本体）を、指定しないとリポジトリ本体を参照します。閲覧のために worktree は作りません。`..`・絶対パス・`.git` を含むパスと、シンボリックリンクで解決後にルート外や `.git` へ出るパスは拒否し、一覧にも出しません。`raw` は HTML を `text/plain` で返し、`X-Content-Type-Options: nosniff` と `Content-Security-Policy: sandbox` を付けて同一オリジンでスクリプトが動かないようにします。
 
 画面側は `app/static/files.mjs` の `openFileBrowser({ repository, taskId, path })` で開きます（`window.openFileBrowser` からも呼べます）。`taskId` を省くとリポジトリ本体、`path` を渡すとそのファイルまでツリーを展開して表示します。ツリーはディレクトリを開いたときに読み込みます。テキストは行番号付き、Markdown は `markdown.mjs`、HTML はスクリプト無効の `sandbox` iframe（`srcdoc`）でプレビューします。HTML プレビューは相対パスの画像などを読み込みません。スタイルは `app/static/files.css` にあり、モジュール読み込み時に追加されます。
+
+## ホームと定時実行
+
+`GET /api/home` は登録済みの全リポジトリについて、タスクのカード情報（`display_status`・`plan_approved` など）、メモ、担当 Agent、日報の日付、最近の夜間記録を返します。そのほかの API は `repo` クエリで対象を選びます。
+
+| API | 内容 |
+| --- | --- |
+| `POST /api/home/memos`・`PATCH`/`DELETE /api/home/memos/<id>` | メモ `{title, body, allow_agent}` の登録・編集・削除 |
+| `PATCH /api/home/agent` | 担当 Agent `{provider, model}` の保存 |
+| `GET /api/home/reports/<YYYY-MM-DD>` | 日報 HTML `{date, html}` |
+| `POST`/`DELETE /api/tasks/<id>/plan-approval` | 計画の承認・取り消し。承認は `can_implement` のときだけ、実行中は不可 |
+
+承認は `task.json` の `plan_approval: {plan_hash, approved_at, source}` に保存します（`source` は `user` か `memo`）。`read_task` は保存中の計画の hash と一致し、`can_implement` のときだけ派生値 `plan_approved` を真にします。夜間に自動実行した hash は `auto_run_plan_hash` に記録し、開始できなかった場合は元に戻します。
+
+保存先は各プロジェクトのタスク記録ルート（`tasks/`、追加リポジトリは `tasks/<リポジトリID>/`）直下の `.home/` です。`task.json` を持たないため、タスク一覧とリンク作成は無視します。
+
+| ファイル | 内容 |
+| --- | --- |
+| `memos.json` | メモの配列 `{id, title, body, allow_agent, task_id, created_at, updated_at}` |
+| `agent.json` | 担当 Agent `{provider, model}` |
+| `scheduler.json` | 最後に処理した回 `{nightly, daily_report}`（日本時間の ISO 8601） |
+| `nightly/YYYY-MM-DD.json` | 夜間実行の記録 `{date, project, started_at, finished_at, entries}`。`entries` は `{kind, task_id, title, run, state, message, ...}` |
+| `daily-reports/YYYY-MM-DD.html` | 対象日の日報 |
+
+スケジューラは `server.py` の `main` が起動するスレッドで、30 秒ごとに各プロジェクトの直近の 0:00・6:00 の回と `scheduler.json` を比べ、未処理の回をプロジェクトごとのスレッドで順に実行します。逃した回が複数あっても直近の 1 回だけ実行します。`scheduler.json` が無い初回は、実行せずに直近の回を処理済みとして保存します。夜間処理は Agent の各 run の終了を `AgentManager.get_run` で待ってから次へ進みます。実装済みのタスクは `start_implementation` では前回の変更ファイルを引き継げないため、02 のチャット（`start_chat(phase="result")`）で追加実験を依頼します。
+
+日報は 6:00 の回で、前日（日本時間 0:00–24:00）に `updated_at` が変わったタスクか、同じ夜（当日 0:00）の夜間記録がある場合だけ作ります。担当 Agent を Codex では `--sandbox read-only`、Claude Code では編集ツールを禁止して起動し、JSON 応答 `{summary, html}` の HTML から `<script>` を除いて保存します。画面は `sandbox` 属性付き iframe の `srcdoc` で表示します。判定ロジックは時刻を引数で受け取るため、`tests/test_home.py` で時刻を固定して確認できます。
 
 ## Markdown と数式
 

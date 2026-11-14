@@ -10,8 +10,12 @@ from urllib.parse import parse_qs, urlparse
 from app.agent import AgentManager
 from app.file_browser import browse_root, list_directory, raw_headers, read_content, resolve_path
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
+from app.home import HomeProject, project_home, read_report, save_agent_settings
+from app.memos import create_memo, delete_memo, update_memo
+from app.plan_approval import approve_plan, revoke_plan_approval
 from app.repositories import RepositoryRegistry
 from app.record_index import sync_record_links
+from app.scheduler import Scheduler
 from app.storage import assign_default_models, initial_plan_html, list_tasks, plan_hash, read_chat, read_task, task_dir, update_task
 from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
@@ -27,6 +31,19 @@ WORKFLOW = TaskWorkflowService(PROJECT_ROOT, TASKS_ROOT, PROJECTS_ROOT)
 AGENT = AgentManager(TASKS_ROOT, PROJECT_ROOT, workflow=WORKFLOW)
 WORKFLOW.agent = AGENT
 REGISTRY = RepositoryRegistry(PROJECT_ROOT / ".codex" / "repositories.local.json", AGENT.cli_paths["codex"], TASKS_ROOT)
+
+
+def home_projects() -> tuple[list[HomeProject], list[dict]]:
+    """Return every usable registered project for the home view and errors for unusable entries."""
+    projects = [HomeProject("develop-agent", "Develop Agent", PROJECT_ROOT, TASKS_ROOT, WORKFLOW, AGENT)]
+    errors = []
+    for entry in REGISTRY.entries():
+        try:
+            context = REGISTRY.get(entry["id"])
+            projects.append(HomeProject(entry["id"], context.name, context.root, context.tasks_root, context.workflow, context.agent))
+        except (KeyError, OSError, ValueError) as error:
+            errors.append({"id": entry.get("id"), "name": entry.get("name"), "error": str(error)})
+    return projects, errors
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -111,7 +128,21 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as error:
                 self.send_json(400, {"error": str(error)})
             return
+        if path == "/api/home":
+            try:
+                projects, errors = home_projects()
+                self.send_json(200, {"projects": [project_home(project) for project in projects], "errors": errors})
+            except (KeyError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path.startswith("/api/") and not self.load_context():
+            return
+        if path.startswith("/api/home/reports/"):
+            date = path.removeprefix("/api/home/reports/")
+            try:
+                self.send_json(200, {"date": date, "html": read_report(self.tasks_root, date)})
+            except (FileNotFoundError, ValueError):
+                self.send_json(404, {"error": "日報が見つかりません"})
             return
         if path == "/api/agent":
             self.send_json(200, self.agent.availability())
@@ -185,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
         else:
-            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs", "/html-document.mjs": "html-document.mjs", "/files.mjs": "files.mjs", "/files.css": "files.css"}.get(path)
+            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs", "/html-document.mjs": "html-document.mjs", "/files.mjs": "files.mjs", "/files.css": "files.css", "/home.mjs": "home.mjs", "/home.css": "home.css"}.get(path)
             if filename is None:
                 self.send_error(404)
                 return
@@ -209,6 +240,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             return
         if path.startswith("/api/") and not self.load_context():
+            return
+        if path == "/api/home/memos" or (path.startswith("/api/tasks/") and path.endswith("/plan-approval")):
+            try:
+                if path == "/api/home/memos":
+                    body = self.read_json()
+                    self.send_json(201, create_memo(self.tasks_root, body["title"], body.get("body", ""), body.get("allow_agent", False)))
+                else:
+                    task_id = path.removeprefix("/api/tasks/").removesuffix("/plan-approval")
+                    if task_id in self.agent.active_tasks:
+                        raise ValueError("Agent実行中は計画を承認できません")
+                    self.send_json(200, self.present_task(approve_plan(self.tasks_root, task_id)))
+            except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
+                self.send_json(400, {"error": str(error)})
             return
         if path.startswith("/api/runs/") and path.endswith("/cancel"):
             try:
@@ -298,6 +342,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path.startswith("/api/") and not self.load_context():
             return
+        if path == "/api/home/agent" or path.startswith("/api/home/memos/"):
+            try:
+                body = self.read_json()
+                if path == "/api/home/agent":
+                    self.send_json(200, save_agent_settings(self.tasks_root, body["provider"], body.get("model", "")))
+                else:
+                    self.send_json(200, update_memo(self.tasks_root, path.removeprefix("/api/home/memos/"), body))
+            except (KeyError, TypeError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if not path.startswith("/api/tasks/"):
             self.send_error(404)
             return
@@ -316,6 +370,17 @@ class Handler(BaseHTTPRequestHandler):
         """Delete one task and its descendants; return their IDs."""
         path = urlparse(self.path).path
         if path.startswith("/api/") and not self.load_context():
+            return
+        if path.startswith("/api/home/memos/") or (path.startswith("/api/tasks/") and path.endswith("/plan-approval")):
+            try:
+                if path.startswith("/api/home/memos/"):
+                    memo_id = path.removeprefix("/api/home/memos/")
+                    delete_memo(self.tasks_root, memo_id)
+                    self.send_json(200, {"deleted_id": memo_id})
+                else:
+                    self.send_json(200, self.present_task(revoke_plan_approval(self.tasks_root, path.removeprefix("/api/tasks/").removesuffix("/plan-approval"))))
+            except (FileNotFoundError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
             return
         if not path.startswith("/api/tasks/") or "/" in path.removeprefix("/api/tasks/"):
             self.send_error(404)
@@ -339,6 +404,7 @@ def main() -> None:
     assign_default_models(TASKS_ROOT)
     sync_record_links(TASKS_ROOT, "task.json", "title")
     sync_record_links(PROJECTS_ROOT, "project.json", "name")
+    Scheduler(lambda: home_projects()[0]).start()
     print("Develop Agent: http://127.0.0.1:8765", flush=True)
     try:
         server.serve_forever()

@@ -1,0 +1,87 @@
+/* Home board, memo, report, and task stage styles. */
+.home-view { padding:34px 42px 70px; max-width:1600px; margin:auto }
+.home-head { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:20px }
+.home-head h1 { font-size:28px; letter-spacing:-.03em; margin:8px 0 6px; font-weight:600 }
+.home-head p { color:#8d9a90; font-size:12px; margin:0; line-height:1.7 }
+.home-toolbar { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:22px }
+.home-segment { display:flex; align-items:center; gap:2px; border:1px solid #344036; border-radius:7px; padding:3px; background:#171d18 }
+.home-segment-label { color:#80907f; font-size:10px; padding:0 8px }
+.home-segment button { border:0; background:transparent; color:#aebdaf; font-size:11px; padding:6px 10px; border-radius:5px }
+.home-segment button.active { background:#2f4232; color:#d8f2d9 }
+.home-projects { display:flex; flex-direction:column; gap:28px }
+.home-loading,.home-empty { color:#7d8a7f; font-size:12px; margin:6px 0 }
+.home-error { color:#e6aaa5; font-size:12px }
+.home-project { border:1px solid #2d372e; border-radius:10px; background:#141914cc; padding:18px }
+.home-project-head { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-bottom:16px }
+.home-project-head > div:first-child { flex:1; min-width:200px }
+.home-project-head h2 { font-size:17px; margin:0 0 3px }
+.home-project-head small { color:#7d8a7f; font-size:10px; overflow-wrap:anywhere }
+.home-agent { display:flex; align-items:center; gap:6px; font-size:11px; color:#a9b8aa }
+.home-agent select { background:#1c241d; color:#d6e3d7; border:1px solid #3a483c; border-radius:5px; padding:6px; font-size:11px; max-width:180px }
+.home-layout { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start }
+.home-board { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; align-content:start }
+.home-card { display:flex; flex-direction:column; gap:7px; text-align:left; border:1px solid #334035; border-left:3px solid #4a5a4c; border-radius:8px; background:#1b221c; color:#e2e9e3; padding:12px 13px; min-height:118px }
+.home-card:hover { background:#212a22; border-color:#4b6150 }
+.home-card-title { font-size:13px; line-height:1.4; overflow-wrap:anywhere }
+.home-card-chips { display:flex; flex-wrap:wrap; gap:5px }
+.home-card-detail,.home-card-parent,.home-card-time { color:#8c9a8e; font-size:10px; line-height:1.5 }
+.home-card-time { margin-top:auto; font-family:'DM Mono',monospace }
+.home-chip { display:inline-block; border:1px solid #3e4d40; border-radius:4px; background:#232c24; color:#bac8bc; padding:2px 6px; font-size:10px; font-weight:700; white-space:nowrap }
+button.home-chip { cursor:pointer }
+.home-chip.approval { border-color:#7b6aa8; background:#2c2640; color:#d3c7f5 }
+.home-chip.linked { border-color:#5f8fa7; background:#1f313b; color:#bde0f1 }
+.home-side { display:flex; flex-direction:column; gap:14px }
+.home-panel { border:1px solid #2d372e; border-radius:8px; background:#171d18; padding:12px 13px }
+.home-panel h3 { font-size:12px; margin:4px 0 8px }
+.home-panel-head { display:flex; justify-content:space-between; align-items:center }
+.home-panel-head .subtle-button,.home-memo-actions .subtle-button,.home-memo-actions .secondary-button,.home-report-list .subtle-button { padding:4px 8px; font-size:10px }
+.home-memo { border-top:1px solid #29322a; padding:9px 0 }
+.home-memo-top { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; font-size:12px }
+.home-memo-body { color:#9eac9f; font-size:11px; line-height:1.6; margin:5px 0; white-space:pre-wrap; max-height:6.4em; overflow:hidden }
+.home-memo-actions { display:flex; gap:6px; justify-content:flex-end }
+.home-memo-form { display:flex; flex-direction:column; gap:7px; padding:6px 0 10px }
+.home-memo-form input,.home-memo-form textarea { background:#111612; color:#e2e9e3; border:1px solid #3a483c; border-radius:5px; padding:7px; font-size:12px; resize:vertical }
+.home-memo-allow { font-size:11px; color:#c6d8c7; display:flex; gap:6px; align-items:center }
+.home-report-list { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px }
+.home-night { border-top:1px solid #29322a; padding:6px 0; font-size:11px }
+.home-night summary { cursor:pointer; color:#c6d8c7 }
+.home-night ul { list-style:none; padding:0; margin:6px 0 0; display:flex; flex-direction:column; gap:7px }
+.home-night li { display:flex; flex-wrap:wrap; gap:6px; align-items:center }
+.home-night li p { width:100%; margin:0; color:#8c9a8e; font-size:10px; line-height:1.5 }
+.home-night-task { border:0; background:none; color:#d7e6d8; padding:0; font-size:11px; text-decoration:underline; text-align:left }
+.home-night-task:disabled { text-decoration:none }
+.home-report-dialog { width:min(1100px,calc(100vw - 32px)); padding:16px }
+.home-report-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px }
+.home-report-dialog iframe { width:100%; height:min(78vh,900px); border:1px solid #3a483c; border-radius:6px; background:#fff }
+
+/* Task stages shared by home cards, the task tree, and the task status pill. */
+.tree-status.planning::before,.status-pill.planning::before { content:'✎' }
+.tree-status.questions::before,.status-pill.questions::before { content:'?' }
+.tree-status.awaiting-approval::before,.status-pill.awaiting-approval::before { content:'!' }
+.tree-status.approved::before,.status-pill.approved::before { content:'☾' }
+.tree-status.verifying::before,.status-pill.verifying::before { content:'◎' }
+.tree-status.review::before,.status-pill.review::before { content:'!' }
+.tree-status.planning,.status-pill.planning,.home-chip.planning { border-color:#4f6052; background:#232c24; color:#c3d2c4 }
+.tree-status.questions,.status-pill.questions,.home-chip.questions { border-color:#a87837; background:#3b2d1c; color:#f1c681 }
+.tree-status.awaiting-approval,.status-pill.awaiting-approval,.home-chip.awaiting-approval { border-color:#b0894a; background:#3d321d; color:#f5d596 }
+.tree-status.approved,.status-pill.approved,.home-chip.approved { border-color:#7b6aa8; background:#2c2640; color:#d3c7f5 }
+.tree-status.verifying,.status-pill.verifying,.home-chip.verifying { border-color:#4f9a96; background:#1d3533; color:#b4e8e4 }
+.tree-status.review,.status-pill.review,.home-chip.review { border-color:#b0745d; background:#3d2620; color:#f3c0ad }
+.home-chip.running { border-color:#6484a7; background:#243447; color:#b5d7f6 }
+.home-chip.completed { border-color:#5f9d66; background:#243829; color:#b5e8b9 }
+.home-card.questions,.home-card.awaiting-approval { border-left-color:#c2913f }
+.home-card.approved { border-left-color:#8f7cc4 }
+.home-card.running { border-left-color:#6f95c0 }
+.home-card.verifying { border-left-color:#4f9a96 }
+.home-card.review { border-left-color:#c0806a }
+.home-card.completed { border-left-color:#5f9d66; opacity:.82 }
+
+@media (max-width:1100px) {
+  .home-layout { grid-template-columns:1fr }
+}
+@media (max-width:760px) {
+  .home-view { padding:22px 16px 50px }
+  .home-head { flex-direction:column; align-items:stretch }
+  .home-board { grid-template-columns:1fr }
+}
+.home-head-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap }

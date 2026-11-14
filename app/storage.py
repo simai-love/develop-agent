@@ -77,6 +77,8 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("merge_hash", None)
     task.setdefault("legacy_completed", False)
     task.setdefault("child_proposals", [])
+    task.setdefault("plan_approval", None)
+    task.setdefault("auto_run_plan_hash", None)
     plan_file = plan_path(directory)
     task["plan"] = plan_file.read_text(encoding="utf-8") if plan_file.exists() else ""
     task["plan_file"] = plan_file.name
@@ -93,6 +95,7 @@ def read_task(root: Path, task_id: str) -> dict:
     task["can_implement"] = bool(task["readiness"]["ready"] and task["readiness"]["plan_hash"] == plan_hash(task["plan"]) and task["plan"].strip())
     if task["status"] == "ready" and not task["can_implement"]:
         task["status"] = "planning"
+    task["plan_approved"] = bool(task["can_implement"] and task["plan_approval"] and task["plan_approval"]["plan_hash"] == plan_hash(task["plan"]))
     return task
 
 
@@ -103,7 +106,7 @@ def plan_hash(plan: str) -> str:
 
 def save_metadata(root: Path, task: dict) -> None:
     """Persist task metadata input without derived document fields; return nothing."""
-    metadata = {key: value for key, value in task.items() if key not in ("plan", "plan_file", "plan_format", "result", "can_implement")}
+    metadata = {key: value for key, value in task.items() if key not in ("plan", "plan_file", "plan_format", "result", "can_implement", "plan_approved")}
     metadata["reports"] = [{key: value for key, value in report.items() if key not in ("content", "format")} for report in task["reports"]]
     write_text(task_dir(root, task["id"]) / "task.json", json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
 

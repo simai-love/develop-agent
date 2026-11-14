@@ -18,6 +18,8 @@
 
 `test_record_index.py` は日時・名称付き実体フォルダとリンクの作成、既存IDフォルダの互換性を確認します。
 
+`test_home.py` は計画の承認と無効化、段階表示、夜間実行の対象選定と順次実行、逃した回の補完、日報の対象判定と読み取り専用の CLI 呼び出し、メモとホーム API を、時刻を固定して確認します。
+
 `test_file_browser.py` はファイル参照のパス検査（`..`、シンボリックリンク、`.git` 除外）、一覧の並び、テキストの切り詰めとバイナリ判定、タスク worktree を含む API と安全な配信ヘッダーを確認します。
 
 Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs`、HTML の計画・レポートの表示用変換（資料 URL、スクリプト除去、見出しからの要点抽出）は `node tests/test_html_document.mjs` で確認します。
