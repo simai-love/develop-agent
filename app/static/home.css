@@ -111,3 +111,11 @@ button.home-chip { cursor:pointer }
 .task-family button:hover { border-color:#4b6150 }
 .task-family .home-owner-dot { width:7px; height:7px; border-radius:50%; background:currentColor; display:inline-block }
 .task-family .agent { color:#8fd3ff } .task-family .user { color:#ffd27a } .task-family .scheduled { color:#c5a8ff } .task-family .done { color:#86a98b }
+.home-drag-handle { cursor:grab; color:#5f6f61; margin-right:8px; font-size:16px; user-select:none }
+.home-drag-handle:hover { color:#aebdaf }
+.home-card[draggable="true"] { cursor:grab }
+.home-card.dragging,.home-project.dragging { opacity:.4 }
+.home-card.drop-before { box-shadow:-4px 0 0 #8fd3ff }
+.home-card.drop-after { box-shadow:4px 0 0 #8fd3ff }
+.home-project.drop-before { box-shadow:0 -4px 0 #8fd3ff }
+.home-project.drop-after { box-shadow:0 4px 0 #8fd3ff }
