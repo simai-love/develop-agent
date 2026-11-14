@@ -59,6 +59,8 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("merge_hash", None)
     task.setdefault("legacy_completed", False)
     task.setdefault("child_proposals", [])
+    task.setdefault("plan_approval", None)
+    task.setdefault("auto_run_plan_hash", None)
     task["plan"] = (directory / "plan.md").read_text(encoding="utf-8")
     reports = task.setdefault("reports", [])
     legacy_result = (directory / "result.md").read_text(encoding="utf-8")
@@ -70,6 +72,7 @@ def read_task(root: Path, task_id: str) -> dict:
     task["can_implement"] = bool(task["readiness"]["ready"] and task["readiness"]["plan_hash"] == plan_hash(task["plan"]) and task["plan"].strip())
     if task["status"] == "ready" and not task["can_implement"]:
         task["status"] = "planning"
+    task["plan_approved"] = bool(task["can_implement"] and task["plan_approval"] and task["plan_approval"]["plan_hash"] == plan_hash(task["plan"]))
     return task
 
 
@@ -80,7 +83,7 @@ def plan_hash(plan: str) -> str:
 
 def save_metadata(root: Path, task: dict) -> None:
     """Persist task metadata input without derived Markdown fields; return nothing."""
-    metadata = {key: value for key, value in task.items() if key not in ("plan", "result", "can_implement")}
+    metadata = {key: value for key, value in task.items() if key not in ("plan", "result", "can_implement", "plan_approved")}
     metadata["reports"] = [{key: value for key, value in report.items() if key != "content"} for report in task["reports"]]
     write_text(task_dir(root, task["id"]) / "task.json", json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
 

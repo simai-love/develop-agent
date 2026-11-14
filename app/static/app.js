@@ -1,4 +1,5 @@
 import { renderMarkdown, setEvidenceRepository } from './markdown.mjs';
+import { initHome, renderApproval, showHome } from './home.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
@@ -416,10 +417,10 @@ async function loadTaskDiff() {
 function render() {
   /** Read the selected task and tab, then render the GUI; return nothing. */
   const task = state.task;
-  $('#empty-view').classList.toggle('hidden', Boolean(task));
+  $('#home-view').classList.toggle('hidden', Boolean(task));
   $('#task-view').classList.toggle('hidden', !task);
   renderTree();
-  if (!task) { $('#breadcrumb').textContent = '概要'; return; }
+  if (!task) { $('#breadcrumb').textContent = 'すべてのプロジェクト'; showHome().catch((error) => toast(error.message)); return; }
   const isPlan = state.tab === 'plan';
   const parent = state.tasks.find((item) => item.id === task.parent_id);
   const migrationPending = Boolean(task.migration_pending);
@@ -478,6 +479,7 @@ function render() {
   $('#execute-button').disabled = migrationPending || Boolean(task.child_count) || !task.can_implement || state.drafts.plan !== task.plan || !agentAvailable() || !modelSelected() || busy || task.status === 'completed' || task.implementation?.state === 'running';
   $('#execute-button').title = task.readiness?.reason || 'Agentの実装可否判定を待っています';
   $('#readiness-reason').textContent = migrationPending ? '移行前のGit変更を確認してください。' : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
+  renderApproval(task, { busy: busy || migrationPending, dirty: state.drafts.plan !== task.plan });
   const childrenDone = state.tasks.filter((item) => item.parent_id === task.id).every((item) => item.status === 'completed');
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
@@ -1032,6 +1034,14 @@ function bindEvents() {
     state.task = null;
     state.messages = [];
     render();
+    showHome(true).catch((error) => toast(error.message));
+  });
+  $('#approve-plan').addEventListener('click', async () => {
+    try {
+      state.task = await api(`/api/tasks/${state.task.id}/plan-approval`, { method: state.task.plan_approved ? 'DELETE' : 'POST' });
+      await refreshTasks();
+      render();
+    } catch (error) { toast(error.message); }
   });
   $('#focus-chat').addEventListener('click', () => $('#chat-input').focus());
   $('#cancel-run').addEventListener('click', async () => {
@@ -1290,8 +1300,8 @@ function bindEvents() {
   window.addEventListener('beforeunload', (event) => { if (hasChanges()) event.preventDefault(); });
 }
 
-async function switchRepository(repository) {
-  /** Load repository's task and Agent state into the view; return nothing. */
+async function switchRepository(repository, openFirst = true) {
+  /** Load repository's task and Agent state, optionally opening its first task; return nothing. */
   const agent = await api('/api/agent', {}, repository);
   const tasks = await api('/api/tasks', {}, repository);
   clearChatImages();
@@ -1306,14 +1316,27 @@ async function switchRepository(repository) {
   state.evidence = [];
   state.activeRuns.clear();
   $('#repository-select').value = repository;
-  if (tasks.length) await selectTask(tasks[0].id);
+  if (openFirst && tasks.length) await selectTask(tasks[0].id);
   else render();
+}
+
+async function openHomeTask(repository, taskId) {
+  /** Switch to repository when needed and open taskId from the home view; return nothing. */
+  if (repository !== state.repository) await switchRepository(repository, false);
+  await selectTask(taskId);
+}
+
+async function createHomeTask(repository) {
+  /** Switch to repository when needed and open the new task dialog; return nothing. */
+  if (repository !== state.repository) await switchRepository(repository, false);
+  openCreate();
 }
 
 async function main() {
   /** Initialize the local workspace; return when its first view is ready. */
   bindChatResize();
   bindEvents();
+  initHome({ api, toast, openTask: openHomeTask, createTask: createHomeTask, models: () => state.modelCatalog, providers: () => state.agentAvailability });
   setInterval(() => refreshUntrackedRun().catch(() => {}), 1500);
   setInterval(() => { if (state.tasks.some(isTaskBusy)) refreshTasks().catch(() => {}); }, 3000);
   $('#clock').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
