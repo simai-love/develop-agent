@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from app.agent_stream import run_streamed
 from app.claude_response import read_claude_response, save_diagnostic
+from app.attachments import validate_chat_files
 from app.evidence import evidence_rule, list_evidence, validate_chat_images
 from app.model_catalog import claude_models, codex_models
 from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
@@ -132,8 +133,8 @@ class AgentManager:
             if task.get("implementation", {}).get("state") == "running":
                 set_implementation(self.tasks_root, task["id"], "failed", validation_outcome="inconclusive", needs_followup=True)
 
-    def start_chat(self, task_id: str, phase: str, message: str, images: object = None) -> dict:
-        """Start a task chat with text and image names; return its run record."""
+    def start_chat(self, task_id: str, phase: str, message: str, images: object = None, files: object = None) -> dict:
+        """Start a task chat with text, image names, and attachment names; return its run record."""
         task = read_task(self.tasks_root, task_id)
         if task["status"] == "completed":
             raise ValueError("Completed tasks cannot be edited")
@@ -144,9 +145,10 @@ class AgentManager:
         if phase == "result" and not task["implementation"].get("changed_files"):
             raise ValueError("Result chat starts after the first implementation")
         image_names = validate_chat_images(self.tasks_root, task_id, images if images is not None else [])
-        if not isinstance(message, str) or not (message.strip() or image_names):
+        file_names = validate_chat_files(self.tasks_root, task_id, files if files is not None else [])
+        if not isinstance(message, str) or not (message.strip() or image_names or file_names):
             raise ValueError("Message is required")
-        return self._start(task_id, "chat", phase, message.strip(), images=image_names)
+        return self._start(task_id, "chat", phase, message.strip(), images=image_names, files=file_names)
 
     def start_implementation(self, task_id: str, additional_instruction: str = "") -> dict:
         """Start a planned task with an optional one-run instruction; return its run."""
@@ -376,7 +378,7 @@ class AgentManager:
                 entries.append({"id": activity_id, "label": str(activity["label"])[:800], "state": activity["state"]})
                 del entries[:-12]
 
-    def _start(self, task_id: str, kind: str, phase: str, message: str, additional_instruction: str = "", images: list[str] | None = None) -> dict:
+    def _start(self, task_id: str, kind: str, phase: str, message: str, additional_instruction: str = "", images: list[str] | None = None, files: list[str] | None = None) -> dict:
         """Register one task run and start its worker; return the run record."""
         if not isinstance(additional_instruction, str):
             raise ValueError("追加指示は文字列で入力してください")
@@ -396,13 +398,13 @@ class AgentManager:
             if writes_code and self.workflow:
                 self.workflow.claim_code(task_id)
             run_id = uuid4().hex
-            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "images": images or [], "activity": [], "cancel_requested": False, "cancelable": True}
+            run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": phase, "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "previous_implementation": dict(task["implementation"]), "additional_instruction": additional_instruction.strip(), "images": images or [], "files": files or [], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
             self.cancel_events[run_id] = threading.Event()
             self.active_tasks.add(task_id)
             set_run_cancelled(self.tasks_root, task_id, False)
         if kind == "chat":
-            append_chat(self.tasks_root, task_id, phase, "user", message, images=images or [])
+            append_chat(self.tasks_root, task_id, phase, "user", message, images=images or [], **({"files": files} if files else {}))
             if phase == "plan":
                 set_readiness(self.tasks_root, task_id, False, "", "Agentが要件を再確認しています")
         if writes_code:
@@ -574,6 +576,7 @@ class AgentManager:
         conversation = "\n".join(
             f"{item['role']}: {prompt_excerpt(item['content'], 1500)}"
             + (f"\n添付画像: {', '.join(str(task_dir(self.tasks_root, task_id) / 'evidence' / name) for name in item['images'])}" if item.get("images") else "")
+            + (f"\n添付ファイル: {', '.join(str(task_dir(self.tasks_root, task_id) / 'attachments' / name) for name in item['files'])}" if item.get("files") else "")
             for item in history
         )
         evidence = list_evidence(self.tasks_root, task_id) if phase == "result" else []
@@ -603,7 +606,7 @@ class AgentManager:
             f"レポート全文: {task_dir(self.tasks_root, task_id) / task['reports'][-1]['file'] if task['reports'] else 'なし'}\n"
             f"検証資料フォルダ: {task_dir(self.tasks_root, task_id) / 'evidence'}\n"
             f"検証資料: 全{len(evidence)}件、最近の{len(recent_evidence)}件: {json.dumps(recent_evidence, ensure_ascii=False)}。必要なファイルだけ開いてください。\n"
-            "最新のユーザー発言に添付画像があれば、その画像を実際に確認してから回答してください。Claude CodeではReadツールで画像ファイルを開いてください。\n"
+            "最新のユーザー発言に添付画像があれば、その画像を実際に確認してから回答してください。Claude CodeではReadツールで画像ファイルを開いてください。添付ファイルがあれば、形式に合う方法（テキストは直接読む、PDF・表計算・圧縮ファイルなどは読み取り用のコマンドやライブラリ）で中身を確認してから回答してください。添付ファイルは編集しないでください。\n"
             f"この画面の会話:\n{conversation}"
         )
 

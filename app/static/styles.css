@@ -1325,3 +1325,11 @@ dialog input:focus,dialog textarea:focus,dialog select:focus {
   margin: 0.55rem 0;
   cursor: pointer;
 }
+.chat-file-chip { display:inline-flex; align-items:center; gap:8px; max-width:260px; min-height:44px; padding:6px 30px 6px 8px; border:1px solid #526a56; border-radius:6px; background:#1b231d; color:#d8e3d9; font-size:12px }
+.chat-file-icon { flex:none; min-width:34px; padding:3px 4px; border-radius:4px; background:#2f4232; color:#bfe6c2; font:600 9px 'DM Mono',monospace; text-align:center }
+.chat-file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.chat-file-chip small { flex:none; color:#8c9a8e; font-size:10px }
+.chat-message-files { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
+.chat-message-files a { text-decoration:none }
+.chat-message-files .chat-file-chip { padding-right:10px }
+.chat-compose.drag-over { outline:2px dashed #8fd3ff; outline-offset:-4px }

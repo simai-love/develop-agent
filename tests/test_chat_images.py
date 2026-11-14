@@ -1,4 +1,4 @@
-"""Verify chat image validation, persistence, and Agent CLI handoff."""
+"""Verify chat image and file attachment validation, persistence, and Agent CLI handoff."""
 
 import json
 import subprocess
@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.agent import AgentManager
+from app.attachments import attachment_path, save_attachment
 from app.evidence import save_evidence
 from app.storage import create_task, read_chat, task_dir, update_task
 
@@ -81,6 +82,41 @@ class ChatImageTests(unittest.TestCase):
         data = save_evidence(self.tasks, self.task["id"], "notes.pdf", b"document")
         with self.assertRaises(ValueError):
             self.manager.start_chat(self.task["id"], "plan", "", [data["name"]])
+
+    def test_any_file_type_is_saved_and_passed_by_path(self):
+        """Save a non-image file under a safe name and name its path in the Agent prompt."""
+        saved = save_attachment(self.tasks, self.task["id"], "../実験 結果.xlsx", b"sheet")
+        self.assertRegex(saved["name"], r"^[0-9a-f]{8}-[a-zA-Z0-9_-]+\.xlsx$")
+        self.assertEqual(saved["original_name"], "実験 結果.xlsx")
+        path = attachment_path(self.tasks, self.task["id"], saved["name"])
+        self.assertEqual(path.read_bytes(), b"sheet")
+        captured = {}
+        answer = {"message": "確認しました", "implementation_ready": False, "reason": "検討中", "questions": [], "child_task_proposals": []}
+
+        def fake_stream(command, prompt, *args):
+            """Record the prompt and return one valid plan response."""
+            captured["prompt"] = prompt
+            Path(command[command.index("--output-last-message") + 1]).write_text(json.dumps(answer), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch("app.agent.run_streamed", side_effect=fake_stream):
+            run = self.manager.start_chat(self.task["id"], "plan", "", [], [saved["name"]])
+            for _ in range(200):
+                if self.manager.get_run(run["id"])["state"] != "running":
+                    break
+                time.sleep(0.01)
+        self.assertEqual(self.manager.get_run(run["id"])["state"], "succeeded")
+        self.assertIn(str(path), captured["prompt"])
+        self.assertEqual(read_chat(self.tasks, self.task["id"], "plan")[0]["files"], [saved["name"]])
+
+    def test_chat_rejects_unknown_or_unsafe_files(self):
+        """Reject missing attachment names and names that leave the attachment folder."""
+        with self.assertRaises(ValueError):
+            self.manager.start_chat(self.task["id"], "plan", "", [], ["missing.bin"])
+        with self.assertRaises(ValueError):
+            self.manager.start_chat(self.task["id"], "plan", "", [], ["../task.json"])
+        with self.assertRaises(ValueError):
+            save_attachment(self.tasks, self.task["id"], "empty.txt", b"")
 
 
 if __name__ == "__main__":

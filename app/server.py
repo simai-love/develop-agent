@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 from app.agent import AgentManager
 from app.file_browser import browse_root, list_directory, raw_headers, read_content, resolve_path
+from app.attachments import MAX_ATTACHMENT_BYTES, attachment_path, save_attachment
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.home import HomeProject, project_home, read_report, save_agent_settings
 from app.memos import create_memo, delete_memo, update_memo
@@ -194,6 +195,24 @@ class Handler(BaseHTTPRequestHandler):
             except (FileNotFoundError, ValueError):
                 self.send_json(404, {"error": "Evidence not found"})
                 return
+        if path.startswith("/api/tasks/") and "/attachments/" in path:
+            parts = path.strip("/").split("/")
+            try:
+                if len(parts) != 5 or parts[3] != "attachments":
+                    raise ValueError("Invalid attachment path")
+                file_path = attachment_path(self.tasks_root, parts[2], parts[4])
+                size = file_path.stat().st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", f"attachment; filename=\"{file_path.name}\"")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Length", str(size))
+                self.end_headers()
+                with file_path.open("rb") as source:
+                    shutil.copyfileobj(source, self.wfile)
+            except (FileNotFoundError, ValueError):
+                self.send_json(404, {"error": "Attachment not found"})
+            return
         if path.startswith("/api/tasks/") and path.endswith("/chat"):
             task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
             phase = parse_qs(parsed.query).get("phase", ["plan"])[0]
@@ -301,6 +320,18 @@ class Handler(BaseHTTPRequestHandler):
             except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
                 self.send_json(400, {"error": str(error)})
             return
+        if path.startswith("/api/tasks/") and path.endswith("/attachments"):
+            try:
+                task_id = path.removeprefix("/api/tasks/").removesuffix("/attachments")
+                read_task(self.tasks_root, task_id)
+                size = int(self.headers.get("Content-Length", "0"))
+                if size < 1 or size > MAX_ATTACHMENT_BYTES:
+                    raise ValueError("添付ファイルは1バイト以上100 MB以下にしてください")
+                name = parse_qs(parsed.query).get("name", [""])[0]
+                self.send_json(201, save_attachment(self.tasks_root, task_id, name, self.rfile.read(size)))
+            except (FileNotFoundError, ValueError) as error:
+                self.send_json(400, {"error": str(error)})
+            return
         if path.startswith("/api/tasks/") and path.endswith("/evidence"):
             try:
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/evidence")
@@ -322,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(201, self.present_task(self.workflow.create_root_task(body["title"])))
             elif path.endswith("/chat"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/chat")
-                self.send_json(202, self.agent.start_chat(task_id, body["phase"], body.get("message", ""), body.get("images", [])))
+                self.send_json(202, self.agent.start_chat(task_id, body["phase"], body.get("message", ""), body.get("images", []), body.get("files", [])))
             elif path.endswith("/complete"):
                 task_id = path.removeprefix("/api/tasks/").removesuffix("/complete")
                 if task_id in self.agent.active_tasks:
