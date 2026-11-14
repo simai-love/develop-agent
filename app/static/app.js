@@ -1062,7 +1062,6 @@ function bindEvents() {
   });
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
-  $('#open-repository-files').addEventListener('click', () => openFileBrowser({ repository: state.repository }));
   $('#open-task-files').addEventListener('click', () => openFileBrowser({ repository: state.repository, taskId: state.task?.id }));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
@@ -1380,7 +1379,7 @@ async function main() {
     const select = $('#repository-select');
     select.replaceChildren(...repositories.map((entry) => new Option(entry.name, entry.id)));
     const stored = window.localStorage.getItem('develop-agent.repository');
-    await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent');
+    await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent', false);
   } catch (error) { toast(error.message); }
 }
 

@@ -42,4 +42,3 @@
 .file-listing-name:hover { text-decoration:underline }
 .changed-file-open { margin-left:8px; padding:2px 7px; font-size:10px }
 @media (max-width:760px) { .file-browser-body { grid-template-columns:1fr; grid-template-rows:40% 60% } .file-tree { border-right:0; border-bottom:1px solid #344037 } }
-#open-repository-files { margin-top:12px }

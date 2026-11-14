@@ -1,3 +1,4 @@
+import { openFileBrowser } from './files.mjs';
 /* Home view: task cards for every project, memos, assigned Agents, daily reports, and night runs. */
 
 const $ = (selector) => document.querySelector(selector);
@@ -291,7 +292,10 @@ function projectSection(project) {
   const create = element('button', 'subtle-button', '＋ タスク');
   create.type = 'button';
   create.addEventListener('click', () => context.createTask(project.id).catch((error) => context.toast(error.message)));
-  head.append(title, agentPicker(project), create);
+  const files = element('button', 'subtle-button', 'ファイル');
+  files.type = 'button';
+  files.addEventListener('click', () => openFileBrowser({ repository: project.id }));
+  head.append(title, agentPicker(project), files, create);
   const board = element('div', 'home-board');
   const tasks = visibleTasks([...project.tasks]);
   if (!tasks.length) board.append(element('p', 'home-empty', view.filter === 'done' ? '完了したタスクはありません。' : 'このプロジェクトのタスクはありません。'));
