@@ -12,28 +12,18 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar" aria-label="タスク一覧">
-      <div class="brand"><span class="brand-mark">◈</span><span>DEVELOP<span class="brand-light">/AGENT</span></span></div>
-      <div class="workspace-label">WORKSPACE <span class="local-badge">LOCAL</span></div>
-      <div class="repository-picker"><label for="repository-select">リポジトリ</label>
-        <select id="repository-select" aria-label="作業するリポジトリ"></select>
-        <button id="add-repository" type="button" class="subtle-button">＋ リポジトリを登録</button>
-      </div>
-      <div class="sidebar-head"><h2>タスク</h2><button id="add-root" class="icon-button" title="新しいタスク" aria-label="新しいタスク">＋</button></div>
-      <nav id="task-tree" class="task-tree" aria-label="開発項目"></nav>
-      <div class="sidebar-bottom"><span class="live-dot"></span> Local workspace <small>データはこの端末に保存</small></div>
-    </aside>
 
     <main class="main-area">
       <header class="topbar"><div class="topbar-path"><button id="home-button" class="home-button" aria-label="ホームへ戻る">⌂ ホーム</button><span>/</span> <strong id="breadcrumb">概要</strong></div><div class="topbar-right">RESEARCH & DEVELOPMENT <span class="topbar-separator"></span><span id="clock"></span></div></header>
       <section id="home-view" class="home-view" aria-label="ホーム">
-        <div class="home-head"><div><div class="eyebrow">HOME / ALL PROJECTS</div><h1>プロジェクトの状況</h1><p>登録済みの全リポジトリのタスク、メモ、日報、夜間の自動実行を一覧します。</p></div><div class="home-head-actions"><button id="empty-add" class="primary-button">＋ タスクを作成 <span>→</span></button></div></div>
+        <div class="home-head"><div><div class="eyebrow">HOME / ALL PROJECTS</div><h1>プロジェクトの状況</h1><p>登録済みの全リポジトリのタスク、メモ、日報、夜間の自動実行を一覧します。</p></div><div class="home-head-actions"><button id="add-repository" type="button" class="subtle-button">＋ リポジトリを登録</button></div></div>
         <div id="home-toolbar" class="home-toolbar"></div>
         <div id="home-projects" class="home-projects"><p class="home-loading">読み込み中…</p></div>
       </section>
 
       <section id="task-view" class="task-view hidden" aria-label="タスク詳細">
-        <div class="task-heading"><div><div class="eyebrow">TASK <span id="task-number"></span></div><h1 id="task-title"></h1><p id="task-parent"></p></div><div class="heading-actions"><span id="status-label" class="status-pill" aria-label="タスクの状態"></span><button id="open-task-files" class="subtle-button" type="button">ファイル</button><button id="rename-task" class="subtle-button">名前を変更</button><button id="add-child" class="subtle-button">＋ 子タスク</button><button id="delete-task" class="danger-button">削除</button></div></div>
+        <div class="task-heading"><div><div class="eyebrow">TASK <span id="task-number"></span></div><h1 id="task-title"></h1><p id="task-parent"></p></div><div class="heading-actions"><span id="status-owner" class="status-owner" aria-label="次に動く人"></span><span id="status-label" class="status-pill" aria-label="タスクの状態"></span><button id="open-task-files" class="subtle-button" type="button">ファイル</button><button id="rename-task" class="subtle-button">名前を変更</button><button id="add-child" class="subtle-button">＋ 子タスク</button><button id="delete-task" class="danger-button">削除</button></div></div>
+        <nav id="task-family" class="task-family" aria-label="親子タスク"></nav>
         <div class="task-tabs" role="tablist"><button id="tab-plan" class="tab active" role="tab" aria-selected="true">01 <span>仮説・要件・実装方針</span></button><button id="tab-result" class="tab" role="tab" aria-selected="false">02 <span>検証結果</span></button></div>
         <div class="work-layout">
           <div id="question-callout" class="question-callout hidden" role="status" aria-live="polite"><span class="question-callout-icon" aria-hidden="true">?</span><div><strong id="question-callout-title">要件がまだ固まっていません</strong><p id="question-callout-description">Agentからの質問を確認し、各質問に選択肢または自由記述で答えてください。</p></div><button id="focus-question" class="secondary-button" type="button">質問に答える ↓</button></div>

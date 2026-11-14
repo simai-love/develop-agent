@@ -131,6 +131,18 @@ class PlanApprovalTest(unittest.TestCase):
             self.assertEqual(display_status({**task, "commit_pending": True}, [], False)["label"], "確認待ち")
             self.assertEqual(display_status({**task, "status": "completed"}, [], False)["label"], "完了")
 
+    def test_display_status_names_who_acts_next(self):
+        """Map running work to the Agent, approved plans to the night run, and others to the user."""
+        with tempfile.TemporaryDirectory() as temporary:
+            task = create_task(Path(temporary), "担当")
+            self.assertEqual(display_status(task, [], True)["owner_label"], "Agent 作業中")
+            self.assertEqual(display_status(task, [], False)["owner"], "user")
+            self.assertEqual(display_status({**task, "status": "completed"}, [], False)["owner"], "done")
+            approved = {**task, "status": "ready", "plan_approved": True, "plan_approval": {"plan_hash": "x"}, "auto_run_plan_hash": None}
+            self.assertEqual(display_status(approved, [], False)["owner"], "scheduled")
+            running_child = {**task, "implementation": {"state": "running"}, "status": "planning"}
+            self.assertEqual(display_status(task, [], False, [running_child])["owner"], "agent")
+
 
 class SchedulerTimingTest(unittest.TestCase):
     """Check scheduled slots, missed-run catch up, and first start handling."""
