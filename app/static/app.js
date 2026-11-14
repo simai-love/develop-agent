@@ -8,7 +8,7 @@ const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を�
 const chatHeightStorageKey = 'develop-agent.chat-height';
 const chatHeightMin = 260;
 const chatHeightMax = 1000;
-const state = { repository: 'develop-agent', tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
+const state = { repository: 'develop-agent', repositories: [], tasks: [], task: null, tab: 'plan', planEditing: false, drafts: { plan: '', result: '' }, parentId: null, deleteTargetId: null, renameTarget: null, messages: [], evidence: [], agentAvailability: { codex: false, claude: false }, modelCatalog: { codex: [], claude: [] }, activeRuns: new Map() };
 let refreshingUntrackedRun = false;
 let diffRequest = 0;
 let parallelSelection = { parentId: null, ids: new Set() };
@@ -116,7 +116,7 @@ function isTaskBusy(task) {
 function taskStatus(task) {
   /** Return a task's visible status, including a locally started Agent run. */
   return isTaskBusy(task)
-    ? { key: 'running', label: '実行中', detail: 'Agentが作業しています' }
+    ? { key: 'running', label: '実行中', detail: 'Agentが作業しています', owner: 'agent', owner_label: 'Agent 作業中' }
     : task.display_status;
 }
 
@@ -297,69 +297,33 @@ function renderPlanHighlights() {
   $('#plan-highlights').classList.toggle('hidden', state.tab !== 'plan' || (!questions && !purpose));
 }
 
-function renderTree() {
-  /** Read task metadata and render the hierarchy; return nothing. */
-  const tree = $('#task-tree');
-  tree.replaceChildren();
-  if (!state.tasks.length) {
-    const empty = document.createElement('div');
-    empty.className = 'tree-empty';
-    empty.textContent = 'タスクはまだありません。＋から作成できます。';
-    tree.append(empty);
-    return;
-  }
-  const children = new Map();
-  for (const task of state.tasks) {
-    const key = task.parent_id || 'root';
-    if (!children.has(key)) children.set(key, []);
-    children.get(key).push(task);
-  }
-  const appendTask = (task, depth, container) => {
-    const item = document.createElement('div');
-    item.className = 'tree-item';
-    item.style.paddingLeft = `${Math.min(depth, 8) * 12}px`;
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = `tree-row${state.task?.id === task.id ? ' selected' : ''}`;
-    const status = taskStatus(task);
-    row.title = `${task.title}：${status.label}（${status.detail}）`;
+function familyButton(task, prefix) {
+  /** Build a button that opens a related task with its owner state; return it. */
+  const status = taskStatus(task);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.title = `${task.title}：${status.owner_label}・${status.label}（${status.detail}）`;
+  const dot = document.createElement('i');
+  dot.className = `home-owner-dot ${status.owner}`;
+  button.append(dot, document.createTextNode(`${prefix}${task.title} · ${status.owner_label}`));
+  button.addEventListener('click', () => selectTask(task.id));
+  return button;
+}
+
+function renderFamily() {
+  /** Render the selected task's parent and child links; return nothing. */
+  const nav = $('#task-family');
+  const task = state.task;
+  nav.replaceChildren();
+  if (!task) return;
+  const parent = state.tasks.find((item) => item.id === task.parent_id);
+  if (parent) nav.append(familyButton(parent, '↑ 親: '));
+  const children = state.tasks.filter((item) => item.parent_id === task.id);
+  if (children.length) {
     const label = document.createElement('span');
-    label.className = 'tree-text';
-    label.textContent = task.title;
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `tree-status ${status.key}`;
-    statusBadge.textContent = status.label;
-    const statusDetail = document.createElement('span');
-    statusDetail.className = 'tree-status-detail';
-    statusDetail.textContent = status.detail;
-    const summary = document.createElement('span');
-    summary.className = 'tree-summary';
-    const meta = document.createElement('span');
-    meta.className = 'tree-meta';
-    meta.append(statusBadge, statusDetail);
-    summary.append(label, meta);
-    row.append(summary);
-    row.addEventListener('click', () => selectTask(task.id));
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'tree-action';
-    add.textContent = '＋';
-    add.title = `「${task.title}」に子タスクを追加`;
-    add.setAttribute('aria-label', add.title);
-    add.addEventListener('click', () => openCreate(task.id));
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'tree-action delete';
-    remove.textContent = '×';
-    remove.title = `「${task.title}」を削除`;
-    remove.setAttribute('aria-label', remove.title);
-    remove.disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
-    remove.addEventListener('click', () => openDelete(task.id));
-    item.append(row, add, remove);
-    container.append(item);
-    for (const child of children.get(task.id) || []) appendTask(child, depth + 1, container);
-  };
-  for (const task of children.get('root') || []) appendTask(task, 0, tree);
+    label.textContent = `子タスク ${children.length}`;
+    nav.append(label, ...children.map((child) => familyButton(child, '')));
+  }
 }
 
 function subtreeIds(taskId) {
@@ -429,19 +393,23 @@ function render() {
   const task = state.task;
   $('#home-view').classList.toggle('hidden', Boolean(task));
   $('#task-view').classList.toggle('hidden', !task);
-  renderTree();
+  renderFamily();
   if (!task) { $('#breadcrumb').textContent = 'すべてのプロジェクト'; showHome().catch((error) => toast(error.message)); return; }
   const isPlan = state.tab === 'plan';
   const planIsHtml = task.plan_format === 'html';
   const parent = state.tasks.find((item) => item.id === task.parent_id);
   const migrationPending = Boolean(task.migration_pending);
-  $('#breadcrumb').textContent = task.title;
+  $('#breadcrumb').textContent = `${state.repositories.find((entry) => entry.id === state.repository)?.name || state.repository} / ${task.title}`;
   $('#task-title').textContent = task.title;
   $('#task-number').textContent = `/ ${task.id.slice(0, 6).toUpperCase()}`;
   $('#task-parent').textContent = parent ? `親タスク / ${parent.title}` : task.status === 'completed' ? 'devへ統合済み' : `作業ブランチ / ${task.branch}`;
   const status = taskStatus(task);
   $('#status-label').textContent = `${status.label} · ${status.detail}`;
   $('#status-label').className = `status-pill ${status.key}`;
+  const owner = document.createElement('i');
+  owner.className = 'home-owner-dot';
+  $('#status-owner').replaceChildren(owner, document.createTextNode(status.owner_label));
+  $('#status-owner').className = `status-owner ${status.owner}`;
   $('#tab-plan').classList.toggle('active', isPlan);
   $('#tab-result').classList.toggle('active', !isPlan);
   $('#tab-plan').setAttribute('aria-selected', String(isPlan));
@@ -922,9 +890,9 @@ async function refreshUntrackedRun() {
 }
 
 async function refreshTasks() {
-  /** Fetch task metadata and update the navigation tree; return nothing. */
+  /** Fetch task metadata and update parent and child links; return nothing. */
   state.tasks = await api('/api/tasks');
-  renderTree();
+  renderFamily();
 }
 
 async function selectTask(id) {
@@ -1022,15 +990,6 @@ function bindEvents() {
     if (event.target === event.currentTarget) event.currentTarget.close();
   });
   let pendingCommit = null;
-  $('#repository-select').addEventListener('change', async (event) => {
-    const previous = state.repository;
-    if (hasChanges() && !window.confirm('未保存の変更を破棄してリポジトリを切り替えますか？')) {
-      event.target.value = previous;
-      return;
-    }
-    try { await switchRepository(event.target.value); }
-    catch (error) { event.target.value = previous; await switchRepository(previous); toast(error.message); }
-  });
   $('#add-repository').addEventListener('click', async () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してリポジトリを登録しますか？')) return;
     $('#repository-form').reset();
@@ -1052,16 +1011,15 @@ function bindEvents() {
     event.preventDefault();
     try {
       const entry = await api('/api/repositories', { method: 'POST', body: JSON.stringify({ name: $('#repository-name').value, path: $('#repository-path').value, gpu: $('#repository-gpu').checked }) });
-      $('#repository-select').add(new Option(entry.name, entry.id));
+      state.repositories.push(entry);
       $('#repository-dialog').close();
       $('#repository-form').reset();
       $('#repository-custom-path').classList.add('hidden');
       $('#repository-path').required = false;
-      await switchRepository(entry.id);
+      await switchRepository(entry.id, false);
+      await showHome(true);
     } catch (error) { toast(error.message); }
   });
-  $('#add-root').addEventListener('click', () => openCreate());
-  $('#empty-add').addEventListener('click', () => openCreate());
   $('#open-task-files').addEventListener('click', () => openFileBrowser({ repository: state.repository, taskId: state.task?.id }));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
@@ -1349,7 +1307,6 @@ async function switchRepository(repository, openFirst = true) {
   state.messages = [];
   state.evidence = [];
   state.activeRuns.clear();
-  $('#repository-select').value = repository;
   if (openFirst && tasks.length) await selectTask(tasks[0].id);
   else render();
 }
@@ -1376,8 +1333,7 @@ async function main() {
   $('#clock').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   try {
     const repositories = await api('/api/repositories');
-    const select = $('#repository-select');
-    select.replaceChildren(...repositories.map((entry) => new Option(entry.name, entry.id)));
+    state.repositories = repositories;
     const stored = window.localStorage.getItem('develop-agent.repository');
     await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent', false);
   } catch (error) { toast(error.message); }

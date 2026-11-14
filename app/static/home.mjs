@@ -5,7 +5,8 @@ const $ = (selector) => document.querySelector(selector);
 const filterStorageKey = 'develop-agent.home.filter';
 const sortStorageKey = 'develop-agent.home.sort';
 const statusOrder = ['questions', 'awaiting-approval', 'review', 'verifying', 'running', 'approved', 'planning', 'not-started', 'completed'];
-const filters = [['all', 'すべて'], ['open', '未完了'], ['done', '完了']];
+const filters = [['all', 'すべて'], ['open', '未完了'], ['agent', 'Agent 作業中'], ['user', 'ユーザー待ち'], ['scheduled', '夜間実行待ち'], ['done', '完了']];
+const ownerFilters = new Set(['agent', 'user', 'scheduled']);
 const sorts = [['updated', '更新日時'], ['created', '作成日時'], ['status', 'ステータス']];
 const runLabels = { implement: '実装', experiment: '追加実験', plan: '計画作成' };
 const stateLabels = { succeeded: '成功', failed: '失敗', cancelled: '中断', skipped: '開始できず', stopped: '計画中で停止' };
@@ -47,11 +48,16 @@ export function initHome(options) {
   /** Store app callbacks: api, toast, openTask, createTask, models, and providers; return nothing. */
   context = options;
   $('#close-home-report').addEventListener('click', () => $('#home-report-dialog').close());
+  setInterval(() => {
+    const visible = !$('#home-view').classList.contains('hidden');
+    const running = data?.projects.some((project) => project.tasks.some((task) => task.display_status.owner === 'agent'));
+    if (visible && !document.hidden && (running || Date.now() - loadedAt > 30000)) showHome(true).catch(() => {});
+  }, 5000);
 }
 
 export async function showHome(force = false) {
   /** Load home data when forced or stale, then render the home view; return nothing. */
-  if (!force && editingMemo.size) return;
+  if (editingMemo.size) return;
   if (!force && data && Date.now() - loadedAt < 15000) { renderHome(); return; }
   loading ??= context.api('/api/home').then((value) => { data = value; loadedAt = Date.now(); }).finally(() => { loading = null; });
   await loading;
@@ -72,9 +78,16 @@ export function renderApproval(task, { busy, dirty }) {
   }
 }
 
+function matchesFilter(task, filter) {
+  /** Return whether task belongs to the home filter: all, open, done, or an owner key. */
+  if (filter === 'all') return true;
+  if (ownerFilters.has(filter)) return task.display_status.owner === filter;
+  return (filter === 'done') === (task.status === 'completed');
+}
+
 function visibleTasks(tasks) {
   /** Filter and sort tasks by the selected home options; return the visible list. */
-  const filtered = tasks.filter((task) => view.filter === 'all' || (view.filter === 'done') === (task.status === 'completed'));
+  const filtered = tasks.filter((task) => matchesFilter(task, view.filter));
   const byTime = (key) => (a, b) => b[key].localeCompare(a[key]);
   const compare = view.sort === 'created' ? byTime('created_at')
     : view.sort === 'status' ? (a, b) => statusOrder.indexOf(a.display_status.key) - statusOrder.indexOf(b.display_status.key) || byTime('updated_at')(a, b)
@@ -85,13 +98,15 @@ function visibleTasks(tasks) {
 function renderToolbar() {
   /** Render the filter and sort controls; return nothing. */
   const toolbar = $('#home-toolbar');
+  const allTasks = data.projects.flatMap((project) => project.tasks);
   const group = (label, options, key, storageKey) => {
     const wrapper = element('div', 'home-segment');
     wrapper.setAttribute('role', 'group');
     wrapper.setAttribute('aria-label', label);
     wrapper.append(element('span', 'home-segment-label', label));
     for (const [id, name] of options) {
-      const button = element('button', view[key] === id ? 'active' : '', name);
+      const button = element('button', `${view[key] === id ? 'active' : ''} ${ownerFilters.has(id) ? `owner-filter ${id}` : ''}`.trim(), name);
+      if (key === 'filter') button.append(element('span', 'home-segment-count', String(allTasks.filter((task) => matchesFilter(task, id)).length)));
       button.type = 'button';
       button.setAttribute('aria-pressed', String(view[key] === id));
       button.addEventListener('click', () => { view[key] = id; store(storageKey, id); renderHome(); });
@@ -107,13 +122,15 @@ function renderToolbar() {
 
 function taskCard(project, task) {
   /** Build one clickable task card for project; return it. */
-  const card = element('button', `home-card ${task.display_status.key}`);
+  const card = element('button', `home-card ${task.display_status.key} owner-${task.display_status.owner}`);
   card.type = 'button';
   card.title = `${task.title}：${task.display_status.label}（${task.display_status.detail}）`;
   const chips = element('div', 'home-card-chips');
   chips.append(element('span', `home-chip ${task.display_status.key}`, task.display_status.label));
   if (task.plan_approved && task.display_status.key !== 'approved') chips.append(element('span', 'home-chip approval', '計画承認済み'));
-  card.append(element('strong', 'home-card-title', task.title), chips, element('span', 'home-card-detail', task.display_status.detail));
+  const owner = element('span', `home-owner ${task.display_status.owner}`);
+  owner.append(element('i', 'home-owner-dot'), document.createTextNode(task.display_status.owner_label));
+  card.append(owner, element('strong', 'home-card-title', task.title), chips, element('span', 'home-card-detail', task.display_status.detail));
   if (task.parent_title) card.append(element('span', 'home-card-parent', `親: ${task.parent_title}`));
   card.append(element('span', 'home-card-time', `更新 ${formatTime(task.updated_at)}`));
   card.addEventListener('click', () => context.openTask(project.id, task.id).catch((error) => context.toast(error.message)));
@@ -298,7 +315,7 @@ function projectSection(project) {
   head.append(title, agentPicker(project), files, create);
   const board = element('div', 'home-board');
   const tasks = visibleTasks([...project.tasks]);
-  if (!tasks.length) board.append(element('p', 'home-empty', view.filter === 'done' ? '完了したタスクはありません。' : 'このプロジェクトのタスクはありません。'));
+  if (!tasks.length) board.append(element('p', 'home-empty', project.tasks.length ? `「${filters.find(([id]) => id === view.filter)[1]}」のタスクはありません。` : 'このプロジェクトのタスクはありません。'));
   for (const task of tasks) board.append(taskCard(project, task));
   const side = element('div', 'home-side');
   side.append(memoSection(project), recordSection(project));
