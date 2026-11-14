@@ -46,6 +46,8 @@ Claude Code の最終イベントでは `structured_output` を優先し、な�
 
 01・02 のチャット画像は既存の資料 API で `evidence/` に保存し、`chat_plan.json` または `chat_result.json` の該当ユーザーメッセージにファイル名を記録します。送信時には同じタスクの画像か検証し、最大4枚・各10 MBを適用します。Codex CLI には現在の依頼に付いた画像を `--image` で渡します。Claude Code CLI には保存先を会話に示し、Read ツールで開くよう指示します。
 
+画像以外のチャット添付は `app/attachments.py` が扱います。拡張子を問わず `POST /api/tasks/<id>/attachments?name=<元の名前>` で受け取り、`attachments/<8桁の16進>-<安全な名前><拡張子>` に保存します（各100 MB以下）。チャットの送信本文 `files` に保存名を最大10件まで指定でき、同じタスクの `attachments/` にあるか検証してからユーザーメッセージの `files` に記録します。Agent への依頼文には保存先の絶対パスを示し、形式に合う方法で読み、編集しないよう指示します。`GET /api/tasks/<id>/attachments/<name>` は `application/octet-stream` と `Content-Disposition: attachment` でダウンロードだけを返します。
+
 Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、最終応答を Codex と同じ形式の JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。表示名のバージョン（例: Opus 5.5）は、サーバーが初回に各別名で CLI を起動し、`init` イベントの解決済みモデル ID から作ります。結果はサーバーの再起動まで保持し、タスクには別名を保存するため新しいバージョンにも追従します。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
 
 ## 計画・レポートの形式

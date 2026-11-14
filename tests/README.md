@@ -8,7 +8,7 @@
 
 `test_response_schemas.py` はCodexの厳格なJSON応答形式で必要な必須項目を確認します。
 
-`test_chat_images.py` はチャット画像の検証、履歴保存、Codex・Claude Codeへの受け渡しを確認します。
+`test_chat_images.py` はチャット画像と任意形式の添付ファイルの検証、安全な保存名、履歴保存、Codex・Claude Codeへの受け渡しを確認します。
 
 `test_claude_command.py` はClaude Codeの権限・サンドボックス・追加ディレクトリの指定、モデル別名とバージョン表示、エラー応答の読み取りと形式外応答の診断保存を確認します。
 

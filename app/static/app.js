@@ -16,6 +16,30 @@ let chatImages = [];
 let sendingChat = false;
 const chatImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const maxChatImageBytes = 10 * 1024 * 1024;
+const maxChatFileBytes = 100 * 1024 * 1024;
+const maxChatFiles = 10;
+let chatFiles = [];
+
+function formatBytes(size) {
+  /** Format a byte count as a short KB or MB label; return text. */
+  return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function fileChip(label, detail) {
+  /** Build a file chip element with a name and detail text; return it. */
+  const chip = document.createElement('span');
+  chip.className = 'chat-file-chip';
+  const icon = document.createElement('span');
+  icon.className = 'chat-file-icon';
+  icon.textContent = (label.split('.').pop() || 'FILE').slice(0, 4).toUpperCase();
+  const name = document.createElement('span');
+  name.className = 'chat-file-name';
+  name.textContent = label;
+  const small = document.createElement('small');
+  small.textContent = detail;
+  chip.append(icon, name, small);
+  return chip;
+}
 
 function renderChatAttachments() {
   /** Render staged image previews and remove controls; return nothing. */
@@ -42,14 +66,26 @@ function renderChatAttachments() {
     });
     preview.append(image, remove);
     return preview;
+  }), ...chatFiles.map((item, index) => {
+    const chip = fileChip(item.file.name, formatBytes(item.file.size));
+    chip.classList.add('chat-attachment');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.disabled = sendingChat;
+    remove.setAttribute('aria-label', `${item.file.name}を削除`);
+    remove.addEventListener('click', () => { chatFiles.splice(index, 1); renderChatAttachments(); });
+    chip.append(remove);
+    return chip;
   }));
-  container.classList.toggle('hidden', !chatImages.length);
+  container.classList.toggle('hidden', !chatImages.length && !chatFiles.length);
 }
 
 function clearChatImages() {
   /** Release staged image URLs and clear the attachment preview; return nothing. */
   chatImages.forEach((item) => URL.revokeObjectURL(item.url));
   chatImages = [];
+  chatFiles = [];
   $('#chat-image-input').value = '';
   renderChatAttachments();
 }
@@ -65,11 +101,15 @@ function openImagePreview(image) {
 }
 
 function addChatImages(files) {
-  /** Stage valid image files for the current message; return nothing. */
+  /** Stage images for the Agent's image input and any other files as attachments; return nothing. */
   if (sendingChat) return;
   for (const file of files) {
-    if (!chatImageTypes.has(file.type)) { toast('PNG、JPEG、WebP、GIF画像を選択してください'); continue; }
-    if (file.size > maxChatImageBytes || !file.size) { toast('画像は1枚10 MB以下にしてください'); continue; }
+    if (!chatImageTypes.has(file.type) || file.size > maxChatImageBytes) {
+      if (!file.size || file.size > maxChatFileBytes) { toast('ファイルは1件100 MB以下にしてください'); continue; }
+      if (chatFiles.length >= maxChatFiles) { toast(`ファイルは${maxChatFiles}件まで添付できます`); break; }
+      chatFiles.push({ file, uploadedName: null });
+      continue;
+    }
     if (chatImages.length >= 4) { toast('画像は4枚まで添付できます'); break; }
     const suffix = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[file.type];
     const named = /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? file : new File([file], `pasted-${Date.now()}.${suffix}`, { type: file.type });
@@ -703,6 +743,19 @@ function renderChat() {
       }
       card.append(gallery);
     }
+    if (message.files?.length) {
+      const list = document.createElement('div');
+      list.className = 'chat-message-files';
+      for (const name of message.files) {
+        const link = document.createElement('a');
+        link.href = repositoryUrl(`/api/tasks/${state.task.id}/attachments/${encodeURIComponent(name)}`);
+        link.download = name;
+        link.title = `${name}をダウンロード`;
+        link.append(fileChip(name.replace(/^[0-9a-f]{8}-/, ''), 'ダウンロード'));
+        list.append(link);
+      }
+      card.append(list);
+    }
     if (message.role === 'assistant') {
       if (state.tab === 'plan' && message === latestAssistant && message.questions?.length) {
         const form = document.createElement('form');
@@ -817,9 +870,16 @@ async function sendChat(message) {
       if (!response.ok) throw new Error(result.error || '画像を保存できませんでした');
       item.uploadedName = result.name;
     }
+    for (const item of chatFiles) {
+      if (item.uploadedName) continue;
+      const response = await fetch(repositoryUrl(`/api/tasks/${taskId}/attachments?name=${encodeURIComponent(item.file.name)}`, repository), { method: 'POST', body: item.file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'ファイルを保存できませんでした');
+      item.uploadedName = result.name;
+    }
     if (state.task?.id !== taskId || state.tab !== phase || state.repository !== repository) return;
     const run = await api(`/api/tasks/${taskId}/chat`, {
-      method: 'POST', body: JSON.stringify({ phase, message, images: chatImages.map((item) => item.uploadedName) }),
+      method: 'POST', body: JSON.stringify({ phase, message, images: chatImages.map((item) => item.uploadedName), files: chatFiles.map((item) => item.uploadedName) }),
     }, repository);
     $('#chat-input').value = '';
     clearChatImages();
@@ -1117,10 +1177,23 @@ function bindEvents() {
     render();
     if (state.planEditing) $('#markdown-editor').focus();
   });
+  const chatForm = $('#chat-form');
+  chatForm.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types.includes('Files') || $('#chat-image-input').disabled) return;
+    event.preventDefault();
+    chatForm.classList.add('drag-over');
+  });
+  chatForm.addEventListener('dragleave', () => chatForm.classList.remove('drag-over'));
+  chatForm.addEventListener('drop', (event) => {
+    chatForm.classList.remove('drag-over');
+    if (!event.dataTransfer?.files.length || $('#chat-image-input').disabled) return;
+    event.preventDefault();
+    addChatImages(event.dataTransfer.files);
+  });
   $('#chat-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const message = $('#chat-input').value.trim();
-    if (!message && !chatImages.length) return;
+    if (!message && !chatImages.length && !chatFiles.length) return;
     await sendChat(message);
   });
   $('#chat-image-input').addEventListener('change', (event) => {
@@ -1128,10 +1201,10 @@ function bindEvents() {
     event.target.value = '';
   });
   $('#chat-input').addEventListener('paste', (event) => {
-    const images = [...event.clipboardData.files].filter((file) => file.type.startsWith('image/'));
-    if (!images.length) return;
+    const files = [...event.clipboardData.files];
+    if (!files.length) return;
     event.preventDefault();
-    addChatImages(images);
+    addChatImages(files);
   });
   $('#markdown-editor').addEventListener('input', (event) => {
     state.drafts.plan = event.target.value;
