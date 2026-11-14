@@ -14,6 +14,7 @@
 | `app/git/workspace.py` | Git のブランチ、worktree、差分、コミット、`--no-ff` マージ |
 | `app/agent.py`・`app/agent_stream.py`・`app/claude_response.py` | CLI の起動、進捗表示、中断、応答の検証 |
 | `app/storage.py`・`app/evidence.py` | タスクと検証資料の保存 |
+| `app/file_browser.py`・`app/static/files.mjs` | プロジェクト内ファイルの閲覧（読み取り専用） |
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
 
 リポジトリ登録画面の候補は `/api/repository-candidates` から取得します。`~/prog` 直下のGitルートのうち、ローカルの `dev` ブランチを持ち、まだ登録されていないものだけを返します。手入力での登録も従来どおり可能です。
@@ -49,6 +50,20 @@ Claude Code CLI は `claude --print --output-format stream-json --json-schema` �
 新規タスクの計画は `plan.html`、レポートは `reports/NNNN.html` です。`plan.html` が無く `plan.md` がある既存タスクは `plan.md` を読み書きし、既存の `reports/*.md`・`result.md` は変換しません。タスク API は `plan_format`（`"html"` または `"markdown"`）と `plan_file`（`plan.html` など）を返し、各レポートは `format` を持ちます。どちらも保存せず、ファイル名から求めます。`plan_hash` は保存中の計画ファイルの本文から計算します。子タスク案の承認で作る初期計画も HTML です。
 
 HTML の文書は `app/static/html-document.mjs` が表示します。`<script>`・`<meta>`・`<link>` を除き、`evidence/<filename>` と `../evidence/<filename>` を資料 API の URL に置き換え、`$...$`・`$$...$$` を KaTeX で描画し、基本スタイルと CSP（自サーバー以外の読み込みとスクリプトを禁止）を加えて `srcdoc` にします。iframe は `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` でスクリプトを無効にし、親画面から `contentDocument` の高さを読み取って枠の高さを合わせます。計画の要点（目的・確認したいこと）とレポートの題（結論）は、`<h1>`〜`<h3>` の見出し文言から次の `<h1>`/`<h2>` までの文字を抜き出します。
+
+## ファイル参照
+
+`app/file_browser.py` は読み取り専用のファイル参照を扱います。書き込み API はありません。共通の問い合わせは `repo`（リポジトリ ID）、`task`（任意）、`path`（ルートからの相対パス）です。
+
+| API | 返す内容 |
+| --- | --- |
+| `GET /api/files` | ディレクトリ一覧（名前、種別、サイズ、更新日時、ディレクトリ優先・名前順、最大 2000 件）とルートの場所 |
+| `GET /api/files/content` | ファイルの情報と本文。テキストは先頭 1 MB まで（超えると `truncated`）、画像は `kind: image`、NUL を含むか UTF-8 でないものは `kind: binary` |
+| `GET /api/files/raw` | ファイルそのもの。`download=1` で添付扱い |
+
+`task` を指定するとタスクのブランチの worktree（無ければリポジトリ本体）を、指定しないとリポジトリ本体を参照します。閲覧のために worktree は作りません。`..`・絶対パス・`.git` を含むパスと、シンボリックリンクで解決後にルート外や `.git` へ出るパスは拒否し、一覧にも出しません。`raw` は HTML を `text/plain` で返し、`X-Content-Type-Options: nosniff` と `Content-Security-Policy: sandbox` を付けて同一オリジンでスクリプトが動かないようにします。
+
+画面側は `app/static/files.mjs` の `openFileBrowser({ repository, taskId, path })` で開きます（`window.openFileBrowser` からも呼べます）。`taskId` を省くとリポジトリ本体、`path` を渡すとそのファイルまでツリーを展開して表示します。ツリーはディレクトリを開いたときに読み込みます。テキストは行番号付き、Markdown は `markdown.mjs`、HTML はスクリプト無効の `sandbox` iframe（`srcdoc`）でプレビューします。HTML プレビューは相対パスの画像などを読み込みません。スタイルは `app/static/files.css` にあり、モジュール読み込み時に追加されます。
 
 ## Markdown と数式
 
