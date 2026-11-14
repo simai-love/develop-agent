@@ -1,0 +1,64 @@
+<!-- 記入ガイド。成果物ではコメントと [ ] 内の案内を実際の内容に置き換える。<script>・イベント属性・外部リソースは使わない。文字だけにせず、図（インライン SVG）と表で要点を示し、本文は短くする。 -->
+<h1>開発計画</h1>
+
+<h2>確認したいこと</h2>
+<!-- 実装範囲や成否を決める質問だけを先頭に置く。不要ならこの節ごと削除する。質問は何個でもよい。 -->
+<div class="callout important">
+  <ul>
+    <li><strong>[質問を一文で書く]</strong>：[選択肢A]／[選択肢B]</li>
+  </ul>
+</div>
+
+<h2>目的</h2>
+<div class="callout note">
+  <p><strong>[ユーザーが実現したいことを、対象と望む変化が分かる一文で書く。方法や推測は入れない。]</strong></p>
+</div>
+
+<h2>現状と困っていること</h2>
+<!-- 確認できた事実と困りごとを分ける。処理の流れや構成が関係するなら、現状の構成図を SVG で示す。 -->
+<ul>
+  <li>[現在どうなっているか、確認できた事実を書く]</li>
+  <li>[そのために何に困っているか、簡潔に書く]</li>
+</ul>
+
+<h2>仮説（改善できそうな理由）</h2>
+<table>
+  <thead><tr><th>考えられる原因</th><th>手を加えると予想される変化</th><th>比べるもの</th></tr></thead>
+  <tbody><tr><td>[仮説]</td><td>[予想]</td><td>[比較対象]</td></tr></tbody>
+</table>
+
+<h2>実装方針</h2>
+<!-- 変更する対象と意図を最大3つ。変更前後の構成や処理の流れを図にする。以下は箱と矢印の例。不要な図は消す。 -->
+<figure>
+  <svg viewBox="0 0 640 120" width="640" role="img" aria-label="[図の説明]">
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+    <g fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="10" y="35" width="160" height="50" rx="6"/>
+      <rect x="240" y="35" width="160" height="50" rx="6" stroke="#8ccb90"/>
+      <rect x="470" y="35" width="160" height="50" rx="6"/>
+      <path d="M170 60H236M400 60H466" marker-end="url(#arrow)"/>
+    </g>
+    <g fill="currentColor" font-size="14" text-anchor="middle">
+      <text x="90" y="65">[入力]</text>
+      <text x="320" y="65">[変更する処理]</text>
+      <text x="550" y="65">[出力]</text>
+    </g>
+  </svg>
+  <figcaption>[図から読み取ってほしいことを一文で書く]</figcaption>
+</figure>
+<ul>
+  <li>[変更する対象とその意図]</li>
+</ul>
+
+<h2>確かめ方</h2>
+<!-- 変更前後を同じ条件で比べ、目的を達成したと判断する条件を示す。数値解析では、評価する場の量、可視化する条件や時刻、図の形式を含める。 -->
+<table>
+  <thead><tr><th>確かめる量・観点</th><th>条件</th><th>変更前の記録方法</th><th>達成と判断する条件</th></tr></thead>
+  <tbody><tr><td>[量]</td><td>[条件]</td><td>[記録方法]</td><td>[判断条件]</td></tr></tbody>
+</table>
+
+<h3>詳細実装方針</h3>
+<!-- 変更するファイルと関数、その入出力、作業順、確認に使うテストを順番に具体的に書く。 -->
+<ol>
+  <li>[ファイル・関数]：[入力] → [出力]</li>
+</ol>

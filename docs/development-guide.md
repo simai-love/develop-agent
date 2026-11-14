@@ -28,7 +28,7 @@
 
 新規タスクの実体フォルダは `YYYY-MM-DD_HHMM_作成時の名称_ID` とし、既存のID名フォルダは移動しません。日時は作成時の日本時間です。名前変更後も実体フォルダ名は固定します。`tasks/by-name/`（追加リポジトリは `tasks/<リポジトリID>/by-name/`）には実体フォルダへのシンボリックリンクを置き、旧プロジェクト記録には `projects/by-name/` を使います。リンクは作成時とサーバー起動時に補い、タスク削除時に取り除きます。API は内部IDで新旧の実体フォルダを引きます。
 
-葉タスクの Agent 実装は、変更を専用 worktree に残し、レポート原稿を `tasks/<id>/report-draft.md` に作ります。GUI が成功した原稿を `reports/0001.md` 以降に保存します。通常の Agent 実行はコミットとマージを行いません。完了操作では、一回の Agent 実行で、確認済みの変更全体を一件以上のコミットに分け、子なら親へ、最上位なら `dev` へ `--no-ff` でマージし、作業ブランチと worktree を削除します。コミット済みで統合だけが残るタスクと子を持つ親では、マージと削除だけを依頼します。統合に失敗したコミット済みタスクも、未完了のうちは 02 のチャットで修正できます。新しい変更があれば次の完了操作でそれをコミットしてから統合します。Agent は統合先の作業場所で動き、統合先の Git 共通ディレクトリと worktree の置き場所に書き込めます。GUI は実行後に次を検証します。各コミットは `Task-Operation` 行を持ち、承認したファイルだけを変更し、最終ツリーが承認時の作業内容と一致すること。統合先の新しい HEAD は、親が「承認時の統合先 HEAD」と「タスクの最終コミット」のマージコミットで、`Task-Operation` 行を持つこと。競合がない場合は `git merge-tree --write-tree` の結果とツリーが一致すること。競合を解決した場合は、統合先からの変更ファイルがタスクの変更範囲に収まること。統合先の作業ツリーが空であること。Agent が作業ブランチを削除しなかった場合は GUI が削除し、会話にその旨を残します。サンドボックスでは `.git/worktrees` の管理情報を消せないことがあるため、検証後に GUI が `git worktree prune` を実行します。失敗時は、統合先にこのタスクの途中のマージが残っていれば GUI が `git merge --abort` で戻します。同じ統合先への完了実行は同時に一件だけです。実行ごとに、ユーザーの方針と、結果・作成したコミット・マージ・Agent の報告を 02 の `chat_result.json` に追記します。失敗または中断した場合は、CLI 出力の末尾と標準エラーを `tasks/<タスクID>/diagnostics/completion-<実行ID>.json` に保存します。子を持つ親は全子の完了と最新の総括が必要です。
+葉タスクの Agent 実装は、変更を専用 worktree に残し、レポート原稿を `tasks/<id>/report-draft.html` に作ります。GUI が成功した原稿を `reports/0001.html` 以降に保存します。通常の Agent 実行はコミットとマージを行いません。完了操作では、一回の Agent 実行で、確認済みの変更全体を一件以上のコミットに分け、子なら親へ、最上位なら `dev` へ `--no-ff` でマージし、作業ブランチと worktree を削除します。コミット済みで統合だけが残るタスクと子を持つ親では、マージと削除だけを依頼します。統合に失敗したコミット済みタスクも、未完了のうちは 02 のチャットで修正できます。新しい変更があれば次の完了操作でそれをコミットしてから統合します。Agent は統合先の作業場所で動き、統合先の Git 共通ディレクトリと worktree の置き場所に書き込めます。GUI は実行後に次を検証します。各コミットは `Task-Operation` 行を持ち、承認したファイルだけを変更し、最終ツリーが承認時の作業内容と一致すること。統合先の新しい HEAD は、親が「承認時の統合先 HEAD」と「タスクの最終コミット」のマージコミットで、`Task-Operation` 行を持つこと。競合がない場合は `git merge-tree --write-tree` の結果とツリーが一致すること。競合を解決した場合は、統合先からの変更ファイルがタスクの変更範囲に収まること。統合先の作業ツリーが空であること。Agent が作業ブランチを削除しなかった場合は GUI が削除し、会話にその旨を残します。サンドボックスでは `.git/worktrees` の管理情報を消せないことがあるため、検証後に GUI が `git worktree prune` を実行します。失敗時は、統合先にこのタスクの途中のマージが残っていれば GUI が `git merge --abort` で戻します。同じ統合先への完了実行は同時に一件だけです。実行ごとに、ユーザーの方針と、結果・作成したコミット・マージ・Agent の報告を 02 の `chat_result.json` に追記します。失敗または中断した場合は、CLI 出力の末尾と標準エラーを `tasks/<タスクID>/diagnostics/completion-<実行ID>.json` に保存します。子を持つ親は全子の完了と最新の総括が必要です。
 
 既存の `projects/` は起動時に読み取り、所属タスクの `root_id` と各作業ブランチを整えます。元の記録は控えとして残し、新しい操作では参照しません。古い Git 操作記録の回復は移行より先に実行します。
 
@@ -44,6 +44,12 @@ Claude Code の最終イベントでは `structured_output` を優先し、な�
 
 Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、最終応答を Codex と同じ形式の JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。表示名のバージョン（例: Opus 5.5）は、サーバーが初回に各別名で CLI を起動し、`init` イベントの解決済みモデル ID から作ります。結果はサーバーの再起動まで保持し、タスクには別名を保存するため新しいバージョンにも追従します。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
 
+## 計画・レポートの形式
+
+新規タスクの計画は `plan.html`、レポートは `reports/NNNN.html` です。`plan.html` が無く `plan.md` がある既存タスクは `plan.md` を読み書きし、既存の `reports/*.md`・`result.md` は変換しません。タスク API は `plan_format`（`"html"` または `"markdown"`）と `plan_file`（`plan.html` など）を返し、各レポートは `format` を持ちます。どちらも保存せず、ファイル名から求めます。`plan_hash` は保存中の計画ファイルの本文から計算します。子タスク案の承認で作る初期計画も HTML です。
+
+HTML の文書は `app/static/html-document.mjs` が表示します。`<script>`・`<meta>`・`<link>` を除き、`evidence/<filename>` と `../evidence/<filename>` を資料 API の URL に置き換え、`$...$`・`$$...$$` を KaTeX で描画し、基本スタイルと CSP（自サーバー以外の読み込みとスクリプトを禁止）を加えて `srcdoc` にします。iframe は `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` でスクリプトを無効にし、親画面から `contentDocument` の高さを読み取って枠の高さを合わせます。計画の要点（目的・確認したいこと）とレポートの題（結論）は、`<h1>`〜`<h3>` の見出し文言から次の `<h1>`/`<h2>` までの文字を抜き出します。
+
 ## Markdown と数式
 
 `app/static/markdown.mjs` は許可したリンクと画像だけを DOM（画面を構成する要素の木構造）に追加します。`../evidence/<filename>` は当該タスクの資料 API（画面からサーバーへデータを求める窓口）へ変換されます。数式は KaTeX（文字で数式を書く LaTeX 記法を画面に描くライブラリ）で描画します。文中の `$...$` と独立した `$$...$$` を扱い、HTML を直接解釈しません。KaTeX は `app/cli/package-lock.json` で固定し、`/vendor/katex/` から配信します。
@@ -55,7 +61,7 @@ Python は `uv sync --frozen` で `.venv` を用意し、有効化してから�
 ```bash
 source .venv/bin/activate
 python -m unittest discover -s tests -q
-node --test tests/test_markdown.mjs
+node --test tests/test_markdown.mjs tests/test_html_document.mjs
 ```
 
 Git 操作を変更した場合は、隔離した一時リポジトリで子から親、親から `dev` への統合と移行のテストを確認してください。

@@ -47,7 +47,7 @@ bash scripts/run.sh
 | 研究開発タスクの指示を調べる人 | [.codex/skills/research-workflow/](.codex/skills/research-workflow/README.md) | 計画・検証の共通手順 |
 | Agent の表示設定を調べる人 | [.codex/skills/research-workflow/agents/](.codex/skills/research-workflow/agents/README.md) | Agent の表示設定 |
 | 画面別の指示を調べる人 | [.codex/skills/research-workflow/references/](.codex/skills/research-workflow/references/README.md) | 01・02 の指示と応答形式 |
-| 計画・結果の書式を調べる人 | [.codex/skills/research-workflow/assets/](.codex/skills/research-workflow/assets/README.md) | Markdown テンプレート |
+| 計画・結果の書式を調べる人 | [.codex/skills/research-workflow/assets/](.codex/skills/research-workflow/assets/README.md) | HTML テンプレート |
 | 文書を直す人 | [docs/](docs/README.md) | 利用ガイドと設計資料の原稿 |
 | 画面例を更新する人 | [docs/screenshots/](docs/screenshots/README.md) | サンプル画面と再現条件 |
 
