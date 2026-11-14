@@ -186,7 +186,7 @@ class WorkflowTest(unittest.TestCase):
                 "from pathlib import Path\n"
                 "prompt = sys.stdin.read()\n"
                 "answered = '選択式質問への回答' in prompt\n"
-                "Path('plan.md').write_text('# 計画\\n処理速度を改善', encoding='utf-8')\n"
+                "Path('plan.html').write_text('# 計画\\n処理速度を改善', encoding='utf-8')\n"
                 "data = {'message': '計画を確認しました' if answered else '対象を選んでください', "
                 "'implementation_ready': answered, "
                 "'reason': '実装可能' if answered else '対象が未確定', "
@@ -222,7 +222,7 @@ class WorkflowTest(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import json, sys\n"
                 "from pathlib import Path\n"
-                "Path('plan.md').write_text('# 計画\\n作業を分割する', encoding='utf-8')\n"
+                "Path('plan.html').write_text('# 計画\\n作業を分割する', encoding='utf-8')\n"
                 "data = {'message': '分割を提案します', 'implementation_ready': True, 'reason': '範囲を分ける', 'questions': [], "
                 "'child_task_proposals': [{'title': '検証A', 'purpose': 'Aを調べる', 'scope': 'Aの実装', 'verification': 'Aを試す', 'reason': '独立して検証できる'}]}\n"
                 "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
@@ -263,7 +263,7 @@ class WorkflowTest(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import json\n"
                 "from pathlib import Path\n"
-                "Path('plan.md').write_text('# 計画\\n対象A', encoding='utf-8')\n"
+                "Path('plan.html').write_text('# 計画\\n対象A', encoding='utf-8')\n"
                 "data = {'message': '計画案です', "
                 "'implementation_ready': True, 'reason': '明確です', 'questions': []}\n"
                 "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'tool-1', 'name': 'Bash', 'input': {'command': 'git status --short'}}]}}), flush=True)\n"
@@ -324,14 +324,14 @@ class WorkflowTest(unittest.TestCase):
                 "prompt = sys.stdin.read()\n"
                 "schema = Path(sys.argv[sys.argv.index('--output-schema') + 1]).name\n"
                 "if schema == 'plan-response.schema.json':\n"
-                "    Path('plan.md').write_text('# 計画\\n' + ('別案' if '別案' in prompt else '改善する'), encoding='utf-8')\n"
+                "    Path('plan.html').write_text('# 計画\\n' + ('別案' if '別案' in prompt else '改善する'), encoding='utf-8')\n"
                 "    data = {'message': '計画しました', 'implementation_ready': True, 'reason': '明確', 'questions': []}\n"
                 "elif '以下の承認済み計画' in prompt:\n"
                 "    root = Path.cwd()\n"
                 "    task = next((root / 'tasks').iterdir())\n"
                 "    (root / 'src').mkdir()\n"
                 "    (root / 'src' / 'change.py').write_text('VALUE = 2\\n')\n"
-                "    (task / 'report-draft.md').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **改善を確認**', encoding='utf-8')\n"
+                "    (task / 'report-draft.html').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **改善を確認**', encoding='utf-8')\n"
                 "    data = {'message': '実装と検証を完了', 'outcome': 'supported', 'evidence_files': [], 'needs_followup': False}\n"
                 "else:\n"
                 "    root = Path.cwd()\n"
@@ -342,11 +342,11 @@ class WorkflowTest(unittest.TestCase):
                 "        sys.exit(1)\n"
                 "    if latest == 'コードを直して再検証して':\n"
                 "        (root / 'src' / 'change.py').write_text('VALUE = 3\\n')\n"
-                "        (task / 'report-draft.md').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **コード修正後に再検証**', encoding='utf-8')\n"
+                "        (task / 'report-draft.html').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **コード修正後に再検証**', encoding='utf-8')\n"
                 "    elif latest == 'どこを直す':\n"
                 "        pass\n"
                 "    else:\n"
-                "        (task / 'report-draft.md').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **追加で画像を確認**', encoding='utf-8')\n"
+                "        (task / 'report-draft.html').write_text('# 検証結果\\n## 結論\\n> [!NOTE]\\n> **追加で画像を確認**', encoding='utf-8')\n"
                 "    (task / 'evidence' / 'plot.png').write_bytes(b'image-data')\n"
                 "    data = {'message': '追加の依頼を確認', 'outcome': 'inconclusive', 'evidence_files': ['evidence/plot.png'], 'needs_followup': True}\n"
                 "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
@@ -362,7 +362,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertIn("src/change.py", task["implementation"]["changed_files"])
             self.assertIn("改善を確認", task["result"])
             self.assertEqual(len(task["reports"]), 1)
-            self.assertTrue((task_dir(tasks, task["id"]) / "reports" / "0001.md").exists())
+            self.assertTrue((task_dir(tasks, task["id"]) / "reports" / "0001.html").exists())
             self._await_run(manager, manager.start_chat(task["id"], "result", "画像でも確かめて")["id"])
             task = read_task(tasks, task["id"])
             self.assertIn("追加で画像を確認", task["result"])

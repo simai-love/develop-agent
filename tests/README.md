@@ -14,6 +14,8 @@
 
 `test_project_api.py` は `~/prog` 相当の候補検索APIと、登録済みリポジトリごとのタスク操作を確認します。
 
+`test_documents.py` は新規タスクの HTML の計画・レポート保存と、`plan.md`・`reports/*.md` の旧形式互換を確認します。
+
 `test_record_index.py` は日時・名称付き実体フォルダとリンクの作成、既存IDフォルダの互換性を確認します。
 
-Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs` で確認します。
+Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs`、HTML の計画・レポートの表示用変換（資料 URL、スクリプト除去、見出しからの要点抽出）は `node tests/test_html_document.mjs` で確認します。

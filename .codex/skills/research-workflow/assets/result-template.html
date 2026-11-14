@@ -1,0 +1,54 @@
+<!-- 記入ガイド。成果物ではコメントと [ ] を実際の内容に置き換える。<script>・イベント属性・外部リソースは使わない。結果は図（インライン SVG・evidence の画像）と表で示し、本文は短くする。 -->
+<h1>検証結果</h1>
+
+<h2>結論</h2>
+<div class="callout note">
+  <p><strong>[今回分かった結論を一文で端的に示す。支持しなかった・判断できない場合もそのまま書く]</strong></p>
+</div>
+
+<h2>定義した確かめ方に対する結果・根拠</h2>
+<!-- 計画で定めた量や条件ごとに h3 を作る。変更前後の値は表に、数値の比較はグラフ（SVG）に、場の分布や動きは evidence の画像・動画にする。各資料の直後に読み取れることを書く。 -->
+<h3>[確かめるべき量]</h3>
+<table>
+  <thead><tr><th>条件</th><th>変更前</th><th>変更後</th><th>判定</th></tr></thead>
+  <tbody><tr><td>[条件]</td><td>[値と単位]</td><td>[値と単位]</td><td>[満たした／満たさない／未確認]</td></tr></tbody>
+</table>
+<!-- 棒グラフの例。値に合わせて棒の高さ・目盛り・ラベルを描き直す。不要なら消す。 -->
+<figure>
+  <svg viewBox="0 0 360 200" width="360" role="img" aria-label="[グラフの説明]">
+    <path d="M50 20V170H340" fill="none" stroke="currentColor"/>
+    <rect x="90" y="70" width="70" height="100" fill="#7c8f7e"/>
+    <rect x="220" y="110" width="70" height="60" fill="#8ccb90"/>
+    <g fill="currentColor" font-size="13" text-anchor="middle">
+      <text x="125" y="188">変更前</text><text x="255" y="188">変更後</text>
+      <text x="125" y="62">[値]</text><text x="255" y="102">[値]</text>
+      <text x="16" y="95" font-size="12" transform="rotate(-90 16 95)">[量と単位]</text>
+    </g>
+  </svg>
+  <figcaption>[グラフから読み取れること]</figcaption>
+</figure>
+<!-- 生成した画像は保存後の reports/ から見た相対パスで埋め込む。数値解析では評価対象の場の量の空間分布を必ず載せる。動画は <video controls src="../evidence/[ファイル名].mp4"></video>。 -->
+<figure>
+  <img src="../evidence/[ファイル名].png" alt="[量・単位・条件・時刻が分かる説明]">
+  <figcaption>[図から読み取れること]</figcaption>
+</figure>
+
+<h2>詳細内容</h2>
+<h3>実装内容と変更ファイル</h3>
+<!-- 実装内容ごとに整理する。コード変更がなければ「コード変更なし」と書く。 -->
+<table>
+  <thead><tr><th>変更内容</th><th>ファイル</th></tr></thead>
+  <tbody><tr><td>[内容]</td><td><code>[パス]</code></td></tr></tbody>
+</table>
+
+<h3>検証環境と再現手順</h3>
+<ul>
+  <li>[実行場所、入力データ、比較条件を書く]</li>
+  <li>[同じ結果を再現する手順またはコマンドを書く]</li>
+</ul>
+
+<h3>未確認事項と残課題</h3>
+<ul>
+  <li>[実行できなかった確認と理由。なければ「なし」]</li>
+  <li>[残る不具合や次に必要な判断。なければ「なし」]</li>
+</ul>

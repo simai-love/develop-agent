@@ -11,7 +11,7 @@ from app.agent import AgentManager
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.repositories import RepositoryRegistry
 from app.record_index import sync_record_links
-from app.storage import assign_default_models, list_tasks, plan_hash, read_chat, read_task, task_dir, update_task
+from app.storage import assign_default_models, initial_plan_html, list_tasks, plan_hash, read_chat, read_task, task_dir, update_task
 from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService as LegacyWorkflowService
@@ -157,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
         else:
-            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs"}.get(path)
+            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs", "/html-document.mjs": "html-document.mjs"}.get(path)
             if filename is None:
                 self.send_error(404)
                 return
@@ -218,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
                         verification = (body.get("verification") or proposal["verification"]).strip()
                         if not all((title, purpose, scope, verification)):
                             raise ValueError("子タスク案の各項目を入力してください")
-                        initial_plan = "\n".join((f"# {title}", f"## 目的\n{purpose}", f"## 実装方針\n{scope}", f"## 確かめ方\n{verification}"))
+                        initial_plan = initial_plan_html(title, [("目的", purpose), ("実装方針", scope), ("確かめ方", verification)])
                         self.send_json(201, self.present_task(self.workflow.create_child(task_id, title, initial_plan, proposal_id)))
                     elif action == "reject":
                         self.send_json(200, self.present_task(self.workflow.reject_proposal(task_id, proposal_id)))
