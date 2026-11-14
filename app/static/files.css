@@ -1,0 +1,45 @@
+.file-browser-dialog { width:min(1240px,calc(100vw - 32px)); height:min(860px,calc(100vh - 32px)); padding:0; display:none; flex-direction:column; overflow:hidden }
+.file-browser-dialog[open] { display:flex }
+.file-browser-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:18px 22px 12px; border-bottom:1px solid #344037 }
+.file-browser-head h2 { margin:6px 0 4px }
+.file-browser-dialog .file-browser-root { margin:0; font:10px/1.6 'DM Mono',monospace; color:#8ea190; overflow-wrap:anywhere }
+.file-browser-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(200px,300px) minmax(0,1fr) }
+.file-tree { overflow:auto; border-right:1px solid #344037; background:#1b211c; padding:6px 0 }
+.file-tree ul { list-style:none; margin:0; padding:0 }
+.file-tree-row { display:flex; gap:6px; width:100%; border:0; background:none; color:#c8d4ca; padding:4px 8px; text-align:left; font:11px/1.5 'DM Mono',monospace; white-space:nowrap }
+.file-tree-row:hover { background:#232d25 }
+.file-tree-row.selected { background:#2e4030; color:#b7e5ba }
+.file-tree-row.dir .file-tree-name { color:#cce8ce }
+.file-tree-icon { width:10px; flex:none; color:#7f9582 }
+.file-tree-name { overflow:hidden; text-overflow:ellipsis }
+.file-tree-note { padding:4px 8px 4px 28px; color:#7f9582; font-size:11px }
+.file-pane { display:flex; flex-direction:column; min-width:0; min-height:0 }
+.file-pane-bar { display:flex; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid #344037; flex-wrap:wrap }
+.file-crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:2px; font:11px 'DM Mono',monospace; min-width:0 }
+.file-crumb { border:0; background:none; color:#b4dcb6; padding:2px 4px; border-radius:4px; font:inherit }
+.file-crumb:hover { background:#232d25 }
+.file-crumb-separator { color:#5f7262 }
+.file-pane-space { flex:1 }
+.file-pane-actions { display:flex; gap:6px; flex-wrap:wrap }
+.file-action { padding:5px 9px; text-decoration:none; display:inline-block }
+.file-action.active { background:#2e4030; border-color:#527858; color:#b7e5ba }
+.file-browser-dialog .file-pane-meta { padding:4px 14px; color:#7f9582; font:10px 'DM Mono',monospace; min-height:18px }
+.file-pane-content { flex:1; min-height:0; overflow:auto; padding:0 14px 14px }
+.file-browser-dialog .file-pane-note { color:#8ea190; font-size:12px; margin:14px 0 }
+.file-browser-dialog .file-pane-warning { color:#d3ae73; font-size:11px; margin:6px 0 }
+.file-code { display:flex; border:1px solid #344037; border-radius:6px; background:#161b17; font:11px/1.55 'DM Mono',monospace; min-width:max-content }
+.file-code pre { margin:0; padding:8px 10px; font:inherit; white-space:pre }
+.file-code-gutter { color:#5f7262; text-align:right; border-right:1px solid #2a332c; user-select:none }
+.file-code-text { color:#d0dcd1 }
+.file-image { max-width:100%; max-height:70vh; display:block; margin-top:10px; background:repeating-conic-gradient(#222a23 0 25%,#1b211c 0 50%) 0 0/16px 16px }
+.file-html-preview { display:block; width:100%; height:calc(100% - 2px); min-height:420px; border:1px solid #344037; border-radius:6px; background:#fff }
+.file-pane-content .rendered-markdown { padding-top:8px; font-size:13px }
+.file-listing { width:100%; border-collapse:collapse; font:11px 'DM Mono',monospace }
+.file-listing td { padding:4px 6px; border-bottom:1px solid #252e27; color:#8ea190; white-space:nowrap }
+.file-listing-size,.file-listing-time { text-align:right; width:1% }
+.file-listing-name { border:0; background:none; color:#d0dcd1; font:inherit; padding:0; text-align:left }
+.file-listing-name.dir { color:#b4dcb6 }
+.file-listing-name:hover { text-decoration:underline }
+.changed-file-open { margin-left:8px; padding:2px 7px; font-size:10px }
+@media (max-width:760px) { .file-browser-body { grid-template-columns:1fr; grid-template-rows:40% 60% } .file-tree { border-right:0; border-bottom:1px solid #344037 } }
+#open-repository-files { margin-top:12px }

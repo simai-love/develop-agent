@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from app.agent import AgentManager
+from app.file_browser import browse_root, list_directory, raw_headers, read_content, resolve_path
 from app.evidence import MAX_EVIDENCE_BYTES, evidence_path, list_evidence, save_evidence
 from app.repositories import RepositoryRegistry
 from app.record_index import sync_record_links
@@ -68,6 +69,30 @@ class Handler(BaseHTTPRequestHandler):
         proposals = [{**item, "stale": item["plan_hash"] != plan_hash(full_task["plan"])} for item in task.get("child_proposals", [])]
         return {**task, "storage_path": str(task_dir(self.tasks_root, task["id"])), "can_implement": full_task["can_implement"], "child_proposals": proposals, "active": active, "active_run_id": active_run_id, "child_count": len(children), "display_status": display_status(full_task, read_chat(self.tasks_root, task["id"], "plan"), active, children)}
 
+    def send_file_view(self, path: str, query: dict) -> None:
+        """Send a read-only directory listing, file content, or raw file for query."""
+        try:
+            root = browse_root(self.workflow, self.tasks_root, query.get("task", [None])[0])
+            relative = query.get("path", [""])[0]
+            if path == "/api/files":
+                self.send_json(200, {**list_directory(root["path"], relative), "root": str(root["path"]), "root_kind": root["kind"], "branch": root["branch"]})
+            elif path == "/api/files/content":
+                self.send_json(200, read_content(root["path"], relative))
+            else:
+                file_path = resolve_path(root["path"], relative)
+                if not file_path.is_file():
+                    raise IsADirectoryError("ファイルではありません")
+                self.send_response(200)
+                for name, value in raw_headers(file_path, query.get("download", ["0"])[0] == "1").items():
+                    self.send_header(name, value)
+                self.end_headers()
+                with file_path.open("rb") as source:
+                    shutil.copyfileobj(source, self.wfile)
+        except FileNotFoundError:
+            self.send_json(404, {"error": "ファイルが見つかりません"})
+        except (NotADirectoryError, IsADirectoryError, ValueError) as error:
+            self.send_json(400, {"error": str(error)})
+
     def do_GET(self) -> None:
         """Return a task list, one task, or a static GUI asset."""
         parsed = urlparse(self.path)
@@ -97,6 +122,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/tasks":
             self.send_json(200, [self.present_task(task) for task in list_tasks(self.tasks_root)])
+            return
+        if path in {"/api/files", "/api/files/content", "/api/files/raw"}:
+            self.send_file_view(path, parse_qs(parsed.query))
             return
         if path.startswith("/api/tasks/") and path.endswith("/completion-preview"):
             try:
@@ -157,7 +185,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
         else:
-            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs"}.get(path)
+            filename = {"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/markdown.mjs": "markdown.mjs", "/files.mjs": "files.mjs", "/files.css": "files.css"}.get(path)
             if filename is None:
                 self.send_error(404)
                 return

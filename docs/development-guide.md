@@ -14,6 +14,7 @@
 | `app/git/workspace.py` | Git のブランチ、worktree、差分、コミット、`--no-ff` マージ |
 | `app/agent.py`・`app/agent_stream.py`・`app/claude_response.py` | CLI の起動、進捗表示、中断、応答の検証 |
 | `app/storage.py`・`app/evidence.py` | タスクと検証資料の保存 |
+| `app/file_browser.py`・`app/static/files.mjs` | プロジェクト内ファイルの閲覧（読み取り専用） |
 | `.codex/skills/research-workflow/` | Agent に渡す画面別の作業規則と応答形式 |
 
 リポジトリ登録画面の候補は `/api/repository-candidates` から取得します。`~/prog` 直下のGitルートのうち、ローカルの `dev` ブランチを持ち、まだ登録されていないものだけを返します。手入力での登録も従来どおり可能です。
@@ -43,6 +44,20 @@ Claude Code の最終イベントでは `structured_output` を優先し、な�
 01・02 のチャット画像は既存の資料 API で `evidence/` に保存し、`chat_plan.json` または `chat_result.json` の該当ユーザーメッセージにファイル名を記録します。送信時には同じタスクの画像か検証し、最大4枚・各10 MBを適用します。Codex CLI には現在の依頼に付いた画像を `--image` で渡します。Claude Code CLI には保存先を会話に示し、Read ツールで開くよう指示します。
 
 Claude Code CLI は `claude --print --output-format stream-json --json-schema` で呼び出し、最終応答を Codex と同じ形式の JSON として扱います。モデルは `fable`・`opus`・`sonnet`・`haiku` の別名か、空欄の既定（CLI 設定）から選びます。表示名のバージョン（例: Opus 5.5）は、サーバーが初回に各別名で CLI を起動し、`init` イベントの解決済みモデル ID から作ります。結果はサーバーの再起動まで保持し、タスクには別名を保存するため新しいバージョンにも追従します。権限は Codex のサンドボックス設定に合わせます。`workspace-write` では Claude Code の Bash サンドボックスを必須にし、サンドボックス内のコマンドを自動許可します。ネットワークは `app/agent.py` の `CLAUDE_ALLOWED_DOMAINS` と、環境変数 `DEVELOP_AGENT_CLAUDE_ALLOWED_DOMAINS`（カンマ区切り）のドメインだけに接続できます。Linux では `bubblewrap` と `socat` が必要で、無い場合は実行せずに理由を表示します。`danger-full-access` では権限確認をすべて省略します。どちらもスキルの手順、タスク保存先、必要に応じて開発コードとコミット用の Git 共通ディレクトリを `--add-dir` で許可します。
+
+## ファイル参照
+
+`app/file_browser.py` は読み取り専用のファイル参照を扱います。書き込み API はありません。共通の問い合わせは `repo`（リポジトリ ID）、`task`（任意）、`path`（ルートからの相対パス）です。
+
+| API | 返す内容 |
+| --- | --- |
+| `GET /api/files` | ディレクトリ一覧（名前、種別、サイズ、更新日時、ディレクトリ優先・名前順、最大 2000 件）とルートの場所 |
+| `GET /api/files/content` | ファイルの情報と本文。テキストは先頭 1 MB まで（超えると `truncated`）、画像は `kind: image`、NUL を含むか UTF-8 でないものは `kind: binary` |
+| `GET /api/files/raw` | ファイルそのもの。`download=1` で添付扱い |
+
+`task` を指定するとタスクのブランチの worktree（無ければリポジトリ本体）を、指定しないとリポジトリ本体を参照します。閲覧のために worktree は作りません。`..`・絶対パス・`.git` を含むパスと、シンボリックリンクで解決後にルート外や `.git` へ出るパスは拒否し、一覧にも出しません。`raw` は HTML を `text/plain` で返し、`X-Content-Type-Options: nosniff` と `Content-Security-Policy: sandbox` を付けて同一オリジンでスクリプトが動かないようにします。
+
+画面側は `app/static/files.mjs` の `openFileBrowser({ repository, taskId, path })` で開きます（`window.openFileBrowser` からも呼べます）。`taskId` を省くとリポジトリ本体、`path` を渡すとそのファイルまでツリーを展開して表示します。ツリーはディレクトリを開いたときに読み込みます。テキストは行番号付き、Markdown は `markdown.mjs`、HTML はスクリプト無効の `sandbox` iframe（`srcdoc`）でプレビューします。HTML プレビューは相対パスの画像などを読み込みません。スタイルは `app/static/files.css` にあり、モジュール読み込み時に追加されます。
 
 ## Markdown と数式
 

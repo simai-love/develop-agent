@@ -16,4 +16,6 @@
 
 `test_record_index.py` は日時・名称付き実体フォルダとリンクの作成、既存IDフォルダの互換性を確認します。
 
+`test_file_browser.py` はファイル参照のパス検査（`..`、シンボリックリンク、`.git` 除外）、一覧の並び、テキストの切り詰めとバイナリ判定、タスク worktree を含む API と安全な配信ヘッダーを確認します。
+
 Markdown の表示と安全なリンク処理は `node tests/test_markdown.mjs` で確認します。

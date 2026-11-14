@@ -31,11 +31,12 @@
         <h1>開発の意図から、<br><em>検証の結果まで。</em></h1>
         <p>タスクを必要に応じて子タスクへ分け、仮説、実装方針、検証結果を記録します。<br>まずはタスクを作成してください。</p>
         <button id="empty-add" class="primary-button">＋ タスクを作成 <span>→</span></button>
+        <button id="open-repository-files" class="subtle-button" type="button">リポジトリのファイルを見る</button>
         <div class="empty-steps"><div><b>01</b><span>仮説を立てる</span></div><i></i><div><b>02</b><span>実装を進める</span></div><i></i><div><b>03</b><span>結果を確かめる</span></div></div>
       </div>
 
       <section id="task-view" class="task-view hidden" aria-label="タスク詳細">
-        <div class="task-heading"><div><div class="eyebrow">TASK <span id="task-number"></span></div><h1 id="task-title"></h1><p id="task-parent"></p></div><div class="heading-actions"><span id="status-label" class="status-pill" aria-label="タスクの状態"></span><button id="rename-task" class="subtle-button">名前を変更</button><button id="add-child" class="subtle-button">＋ 子タスク</button><button id="delete-task" class="danger-button">削除</button></div></div>
+        <div class="task-heading"><div><div class="eyebrow">TASK <span id="task-number"></span></div><h1 id="task-title"></h1><p id="task-parent"></p></div><div class="heading-actions"><span id="status-label" class="status-pill" aria-label="タスクの状態"></span><button id="open-task-files" class="subtle-button" type="button">ファイル</button><button id="rename-task" class="subtle-button">名前を変更</button><button id="add-child" class="subtle-button">＋ 子タスク</button><button id="delete-task" class="danger-button">削除</button></div></div>
         <div class="task-tabs" role="tablist"><button id="tab-plan" class="tab active" role="tab" aria-selected="true">01 <span>仮説・要件・実装方針</span></button><button id="tab-result" class="tab" role="tab" aria-selected="false">02 <span>検証結果</span></button></div>
         <div class="work-layout">
           <div id="question-callout" class="question-callout hidden" role="status" aria-live="polite"><span class="question-callout-icon" aria-hidden="true">?</span><div><strong id="question-callout-title">要件がまだ固まっていません</strong><p id="question-callout-description">Agentからの質問を確認し、各質問に選択肢または自由記述で答えてください。</p></div><button id="focus-question" class="secondary-button" type="button">質問に答える ↓</button></div>

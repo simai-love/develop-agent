@@ -1,4 +1,5 @@
 import { renderMarkdown, setEvidenceRepository } from './markdown.mjs';
+import { openFileBrowser } from './files.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
@@ -386,6 +387,12 @@ async function loadTaskDiff() {
       details.className = 'diff-file';
       const summary = document.createElement('summary');
       summary.textContent = path;
+      const openFile = document.createElement('button');
+      openFile.type = 'button';
+      openFile.className = 'subtle-button changed-file-open';
+      openFile.textContent = 'ファイルを開く';
+      openFile.addEventListener('click', (event) => { event.preventDefault(); openFileBrowser({ repository: state.repository, taskId, path }); });
+      summary.append(openFile);
       const content = document.createElement('div');
       details.append(summary, content);
       details.addEventListener('toggle', async () => {
@@ -1027,6 +1034,8 @@ function bindEvents() {
   });
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
+  $('#open-repository-files').addEventListener('click', () => openFileBrowser({ repository: state.repository }));
+  $('#open-task-files').addEventListener('click', () => openFileBrowser({ repository: state.repository, taskId: state.task?.id }));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
     state.task = null;
