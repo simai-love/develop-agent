@@ -7,7 +7,10 @@ const sortStorageKey = 'develop-agent.home.sort';
 const statusOrder = ['questions', 'awaiting-approval', 'review', 'verifying', 'running', 'approved', 'planning', 'not-started', 'completed'];
 const filters = [['all', 'すべて'], ['open', '未完了'], ['agent', 'Agent 作業中'], ['user', 'ユーザー待ち'], ['scheduled', '夜間実行待ち'], ['done', '完了']];
 const ownerFilters = new Set(['agent', 'user', 'scheduled']);
-const sorts = [['updated', '更新日時'], ['created', '作成日時'], ['status', 'ステータス']];
+const sorts = [['updated', '更新日時'], ['created', '作成日時'], ['status', 'ステータス'], ['manual', '手動']];
+const taskOrderStorageKey = 'develop-agent.home.task-order';
+const projectOrderStorageKey = 'develop-agent.home.project-order';
+let dragging = null;
 const runLabels = { implement: '実装', experiment: '追加実験', plan: '計画作成' };
 const stateLabels = { succeeded: '成功', failed: '失敗', cancelled: '中断', skipped: '開始できず', stopped: '計画中で停止' };
 let context = null;
@@ -51,7 +54,7 @@ export function initHome(options) {
   setInterval(() => {
     const visible = !$('#home-view').classList.contains('hidden');
     const running = data?.projects.some((project) => project.tasks.some((task) => task.display_status.owner === 'agent'));
-    if (visible && !document.hidden && (running || Date.now() - loadedAt > 30000)) showHome(true).catch(() => {});
+    if (visible && !dragging && !document.hidden && (running || Date.now() - loadedAt > 30000)) showHome(true).catch(() => {});
   }, 5000);
 }
 
@@ -85,14 +88,76 @@ function matchesFilter(task, filter) {
   return (filter === 'done') === (task.status === 'completed');
 }
 
-function visibleTasks(tasks) {
+function readJson(key, fallback) {
+  /** Return the parsed per-browser JSON value for key, or fallback. */
+  try { return JSON.parse(window.localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+}
+
+function ordered(items, savedIds) {
+  /** Return items with unsaved ones first (newest first), then in savedIds order. */
+  const rank = new Map(savedIds.map((id, index) => [id, index]));
+  return [...items].sort((a, b) => (rank.get(a.id) ?? -1) - (rank.get(b.id) ?? -1) || (rank.has(a.id) ? 0 : b.created_at?.localeCompare(a.created_at ?? '') ?? 0));
+}
+
+function moveId(ids, movedId, targetId, after) {
+  /** Return ids with movedId placed before or after targetId. */
+  const next = ids.filter((id) => id !== movedId);
+  next.splice(next.indexOf(targetId) + (after ? 1 : 0), 0, movedId);
+  return next;
+}
+
+function dropPosition(event, node, horizontal) {
+  /** Return whether the pointer is in the latter half of node along the layout axis. */
+  const box = node.getBoundingClientRect();
+  return horizontal ? event.clientX > box.left + box.width / 2 : event.clientY > box.top + box.height / 2;
+}
+
+function bindDrag(node, kind, id, onDrop, horizontal) {
+  /** Make node a drag source and drop target of kind that calls onDrop(movedId, after); return nothing. */
+  node.addEventListener('dragstart', (event) => {
+    dragging = { kind, id };
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    requestAnimationFrame(() => node.classList.add('dragging'));
+    event.stopPropagation();
+  });
+  node.addEventListener('dragend', () => { dragging = null; node.classList.remove('dragging'); document.querySelectorAll('.drop-before,.drop-after').forEach((item) => item.classList.remove('drop-before', 'drop-after')); });
+  node.addEventListener('dragover', (event) => {
+    if (dragging?.kind !== kind || dragging.id === id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const after = dropPosition(event, node, horizontal);
+    node.classList.toggle('drop-after', after);
+    node.classList.toggle('drop-before', !after);
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('drop-before', 'drop-after'));
+  node.addEventListener('drop', (event) => {
+    if (dragging?.kind !== kind || dragging.id === id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onDrop(dragging.id, dropPosition(event, node, horizontal));
+  });
+}
+
+function orderedProjects() {
+  /** Return loaded projects in the saved browser order, unsaved ones last. */
+  const rank = new Map(readJson(projectOrderStorageKey, []).map((id, index) => [id, index]));
+  return [...data.projects].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+}
+
+function visibleTasks(tasks, projectId) {
   /** Filter and sort tasks by the selected home options; return the visible list. */
-  const filtered = tasks.filter((task) => matchesFilter(task, view.filter));
+  return sortedTasks(tasks, projectId).filter((task) => matchesFilter(task, view.filter));
+}
+
+function sortedTasks(tasks, projectId) {
+  /** Sort a copy of tasks by the selected order, or the saved manual order; return it. */
+  if (view.sort === 'manual') return ordered(tasks, readJson(taskOrderStorageKey, {})[projectId] || []);
   const byTime = (key) => (a, b) => b[key].localeCompare(a[key]);
   const compare = view.sort === 'created' ? byTime('created_at')
     : view.sort === 'status' ? (a, b) => statusOrder.indexOf(a.display_status.key) - statusOrder.indexOf(b.display_status.key) || byTime('updated_at')(a, b)
       : byTime('updated_at');
-  return filtered.sort(compare);
+  return [...tasks].sort(compare);
 }
 
 function renderToolbar() {
@@ -134,6 +199,16 @@ function taskCard(project, task) {
   if (task.parent_title) card.append(element('span', 'home-card-parent', `親: ${task.parent_title}`));
   card.append(element('span', 'home-card-time', `更新 ${formatTime(task.updated_at)}`));
   card.addEventListener('click', () => context.openTask(project.id, task.id).catch((error) => context.toast(error.message)));
+  card.draggable = true;
+  bindDrag(card, `task:${project.id}`, task.id, (movedId, after) => {
+    const orders = readJson(taskOrderStorageKey, {});
+    const current = sortedTasks(project.tasks, project.id).map((item) => item.id);
+    orders[project.id] = moveId(current, movedId, task.id, after);
+    store(taskOrderStorageKey, JSON.stringify(orders));
+    view.sort = 'manual';
+    store(sortStorageKey, 'manual');
+    renderHome();
+  }, true);
   return card;
 }
 
@@ -302,10 +377,24 @@ function recordSection(project) {
 function projectSection(project) {
   /** Build one project's board: header, task cards, memos, and records; return it. */
   const section = element('section', 'home-project');
+  section.dataset.projectId = project.id;
+  const handle = element('span', 'home-drag-handle', '⠿');
+  handle.title = 'ドラッグしてプロジェクトの順番を変更';
+  handle.setAttribute('aria-hidden', 'true');
+  handle.addEventListener('pointerdown', () => { section.draggable = true; });
+  handle.addEventListener('pointerup', () => { section.draggable = false; });
+  section.addEventListener('dragend', () => { section.draggable = false; });
+  bindDrag(section, 'project', project.id, (movedId, after) => {
+    const current = orderedProjects().map((item) => item.id);
+    store(projectOrderStorageKey, JSON.stringify(moveId(current, movedId, project.id, after)));
+    renderHome();
+  }, false);
   const head = element('div', 'home-project-head');
   const title = element('div');
   const open = project.tasks.filter((task) => task.status !== 'completed').length;
-  title.append(element('h2', '', project.name), element('small', '', `${project.path} · 未完了 ${open} / 全 ${project.tasks.length}`));
+  const name = element('h2');
+  name.append(handle, document.createTextNode(project.name));
+  title.append(name, element('small', '', `${project.path} · 未完了 ${open} / 全 ${project.tasks.length}`));
   const create = element('button', 'subtle-button', '＋ タスク');
   create.type = 'button';
   create.addEventListener('click', () => context.createTask(project.id).catch((error) => context.toast(error.message)));
@@ -314,7 +403,7 @@ function projectSection(project) {
   files.addEventListener('click', () => openFileBrowser({ repository: project.id }));
   head.append(title, agentPicker(project), files, create);
   const board = element('div', 'home-board');
-  const tasks = visibleTasks([...project.tasks]);
+  const tasks = visibleTasks([...project.tasks], project.id);
   if (!tasks.length) board.append(element('p', 'home-empty', project.tasks.length ? `「${filters.find(([id]) => id === view.filter)[1]}」のタスクはありません。` : 'このプロジェクトのタスクはありません。'));
   for (const task of tasks) board.append(taskCard(project, task));
   const side = element('div', 'home-side');
@@ -329,7 +418,7 @@ function renderHome() {
   /** Render the toolbar and every project's board from loaded data; return nothing. */
   if (!data) return;
   renderToolbar();
-  const sections = data.projects.map(projectSection);
+  const sections = orderedProjects().map(projectSection);
   for (const failure of data.errors) sections.push(element('p', 'home-error', `${failure.name || failure.id}: ${failure.error}`));
   $('#home-projects').replaceChildren(...sections);
 }
