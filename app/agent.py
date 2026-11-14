@@ -25,6 +25,17 @@ CLAUDE_ALLOWED_DOMAINS = [
 ]
 
 
+def html_document_rule() -> str:
+    """Return the prompt text that defines how plan and report HTML documents are written."""
+    return (
+        "新しい計画とレポートはHTMLで書いてください（<body>の中身だけの断片で可）。"
+        "<script>、イベント属性（onclick など）、外部のCSS・フォント・画像・iframeは使わず、ファイル単体で表示できる形にしてください。"
+        "文字ばかりにせず、構成図・処理の流れ・比較表・結果グラフをインラインSVGと<table>で示し、本文は短く要点だけを書いてください。"
+        "SVGにはviewBoxと表示幅のwidthを付け、文字と線はcurrentColorか明示した色にしてください（表示は暗い背景です）。"
+        "画像は<img src=\"../evidence/<ファイル名>\" alt=\"説明\">（計画では evidence/<ファイル名> も可）、動画は<video controls src=\"../evidence/<ファイル名>\">で参照してください。"
+    )
+
+
 class PlanChangeNeeded(ValueError):
     """Carry the Agent's reason for stopping before implementation."""
 
@@ -569,20 +580,22 @@ class AgentManager:
         recent_evidence = evidence[-20:]
         if phase == "plan":
             instructions = "01 計画チャットです。開発コードは変更せず、計画と実装可否を整理してください。"
-            references = "references/01-plan.md と assets/plan-template.md"
+            references = "references/01-plan.md と assets/plan-template.html"
         else:
             instructions = (
                 "02 検証結果チャットです。依頼が検証だけならコードを変更せず、修正が必要ならコードを直して再検証してください。"
                 "コードを変更した場合は、JSONのcommit_messageに簡潔な日本語のコミットメッセージ案を書いてください。"
-                "新しい結果が得られた場合は、今回分だけの独立したレポートを report-draft.md に書いてください。"
+                "新しい結果が得られた場合は、今回分だけの独立したレポートを report-draft.html に書いてください。"
                 "過去のレポートは編集しないでください。結果がまだない場合はレポートを書かず、チャットで理由を説明してください。"
                 f"{evidence_rule()}"
             )
-            references = "references/02-validation.md と assets/result-template.md"
+            references = "references/02-validation.md と assets/result-template.html"
         return (
             "日本語で応答してください。研究開発タスクの相談相手です。指定タスクの記録を直接更新してください。"
             f"{instructions}最初に {SKILL_ROOT / 'SKILL.md'} と {references} を読んでください。"
-            f"{'plan.md' if phase == 'plan' else 'report-draft.md'} を必要に応じて更新し、指定のJSON Schemaで短く返してください。"
+            f"{task['plan_file'] if phase == 'plan' else 'report-draft.html'} を必要に応じて更新し、指定のJSON Schemaで短く返してください。"
+            + (f"この既存タスクの計画はMarkdown形式です。{task['plan_file']} はMarkdownのまま更新し、HTMLへ変換しないでください。" if phase == "plan" and task["plan_format"] == "markdown" else "")
+            + f"{html_document_rule()}"
             "ほかのタスクは変更しないでください。Gitコミットとマージは行わないでください。\n"
             f"タスク: {task['title']}\n画面: {phase}\n"
             f"タスク保存先: {task_dir(self.tasks_root, task_id)}\n開発コードの場所: {self.workflow.code_path(task_id) if self.workflow else self.project_root}\n"
@@ -599,15 +612,16 @@ class AgentManager:
         task = read_task(self.tasks_root, task_id)
         return (
             "日本語で応答してください。以下の承認済み計画に従い、このリポジトリで実際にコードを変更してください。"
-            "コード変更後、そのまま計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.md、"
+            "コード変更後、そのまま計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.html、"
             "検証用スクリプトはvalidation/、画像・動画・測定データはevidence/に保存してください。"
             f"{evidence_rule()}"
-            "生成した画像は自分で開いて体裁を確認し、内容の解釈をreport-draft.mdに書いてください。"
+            "生成した画像は自分で開いて体裁を確認し、内容の解釈をreport-draft.htmlに書いてください。"
+            f"{html_document_rule()}"
             "JSONのcommit_messageに今回の変更を表す簡潔な日本語のコミットメッセージ案を書いてください。"
             "この実行はタスクの完了判断ではありません。Gitコミットやマージは行わないでください。"
             "計画を変更する必要が生じた場合は作業を止め、理由を返答してください。"
             "検証で仮説が支持されない場合も観測結果を残し、指定のJSON Schemaで結論を返してください。\n"
-            f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md、assets/result-template.md を読んでください。\n"
+            f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md、assets/result-template.html を読んでください。\n"
             f"タスク: {task['title']}\nタスク保存先: {task_dir(self.tasks_root, task_id)}\n計画:\n{task['plan']}"
             + (f"\n今回の実行への追加指示（計画は変更しない）:\n{additional_instruction}" if additional_instruction else "")
         )
@@ -621,7 +635,7 @@ class AgentManager:
             "日本語で子タスクの結果を総括してください。コードとGitは変更しません。"
             "子タスクの資料リンクを親タスクの資料としてコピーせず、子タスク名とレポート番号で根拠を示してください。"
             f"最初に {SKILL_ROOT / 'SKILL.md'} と references/02-validation.md を読んでください。"
-            f"総括を {report_draft_path(self.tasks_root, task_id)} に保存し、検証用JSON Schemaで返してください。"
+            f"総括を {report_draft_path(self.tasks_root, task_id)} に保存し、検証用JSON Schemaで返してください。{html_document_rule()}"
             f"親タスク: {task['title']}\n計画: {task['plan']}\n分割前のcommit: {task['pre_split_commit']}\n分割前の検証: {task['result']}\n子タスク:\n{details}"
             + (f"\n今回の総括への追加指示（計画は変更しない）:\n{additional_instruction}" if additional_instruction else "")
         )
@@ -642,7 +656,10 @@ class AgentManager:
         available = {f"evidence/{entry['name']}" for entry in list_evidence(self.tasks_root, task_id)}
         if not isinstance(files, list) or any(not isinstance(name, str) or name not in available for name in files):
             raise ValueError("Agent referenced a missing evidence file")
-        return bool(report_draft_path(self.tasks_root, task_id).read_text(encoding="utf-8").strip())
+        draft = report_draft_path(self.tasks_root, task_id)
+        if not draft.read_text(encoding="utf-8").strip() and draft.with_suffix(".md").exists():
+            raise ValueError(f"レポートは {draft.name} にHTMLで書いてください")
+        return bool(draft.read_text(encoding="utf-8").strip())
 
     def _change_snapshot(self, code_root: Path | None = None) -> dict[str, str]:
         """Return hashes of changed and untracked files under code_root."""

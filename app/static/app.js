@@ -1,4 +1,7 @@
 import { renderMarkdown, setEvidenceRepository } from './markdown.mjs';
+import { htmlSection, renderHtmlDocument } from './html-document.mjs';
+import { openFileBrowser } from './files.mjs';
+import { initHome, renderApproval, showHome } from './home.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const outcomeLabels = { supported: '仮説を支持', not_supported: '仮説を支持せず', inconclusive: '判断保留' };
@@ -267,9 +270,10 @@ function hasChanges() {
   return state.task && state.drafts.plan !== state.task.plan;
 }
 
-function planSection(markdown, heading) {
-  /** Read Markdown and a section heading; return its plain text for the key points. */
-  const lines = markdown.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
+function planSection(source, heading, format = 'markdown') {
+  /** Read Markdown or HTML source, a section heading, and the format; return the section's plain text for the key points. */
+  if (format === 'html') return htmlSection(source, heading);
+  const lines = source.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
   if (start < 0) return '';
   const body = [];
@@ -283,8 +287,9 @@ function planSection(markdown, heading) {
 
 function renderPlanHighlights() {
   /** Read the current plan draft and render its questions and purpose; return nothing. */
-  const questions = planSection(state.drafts.plan, '確認したいこと');
-  const purpose = planSection(state.drafts.plan, '目的');
+  const format = state.task?.plan_format;
+  const questions = planSection(state.drafts.plan, '確認したいこと', format);
+  const purpose = planSection(state.drafts.plan, '目的', format);
   $('#plan-questions-text').textContent = questions;
   $('#plan-purpose-text').textContent = purpose;
   $('#plan-questions-card').classList.toggle('hidden', !questions);
@@ -386,6 +391,12 @@ async function loadTaskDiff() {
       details.className = 'diff-file';
       const summary = document.createElement('summary');
       summary.textContent = path;
+      const openFile = document.createElement('button');
+      openFile.type = 'button';
+      openFile.className = 'subtle-button changed-file-open';
+      openFile.textContent = 'ファイルを開く';
+      openFile.addEventListener('click', (event) => { event.preventDefault(); openFileBrowser({ repository: state.repository, taskId, path }); });
+      summary.append(openFile);
       const content = document.createElement('div');
       details.append(summary, content);
       details.addEventListener('toggle', async () => {
@@ -416,11 +427,12 @@ async function loadTaskDiff() {
 function render() {
   /** Read the selected task and tab, then render the GUI; return nothing. */
   const task = state.task;
-  $('#empty-view').classList.toggle('hidden', Boolean(task));
+  $('#home-view').classList.toggle('hidden', Boolean(task));
   $('#task-view').classList.toggle('hidden', !task);
   renderTree();
-  if (!task) { $('#breadcrumb').textContent = '概要'; return; }
+  if (!task) { $('#breadcrumb').textContent = 'すべてのプロジェクト'; showHome().catch((error) => toast(error.message)); return; }
   const isPlan = state.tab === 'plan';
+  const planIsHtml = task.plan_format === 'html';
   const parent = state.tasks.find((item) => item.id === task.parent_id);
   const migrationPending = Boolean(task.migration_pending);
   $('#breadcrumb').textContent = task.title;
@@ -437,16 +449,21 @@ function render() {
   $('#section-kicker').textContent = isPlan ? 'PLAN / HYPOTHESIS' : 'RESULT / EVIDENCE';
   $('#section-title').textContent = isPlan ? '開発の計画' : '検証の結果';
   $('#section-description').textContent = isPlan
-    ? '目的から仮説、要件、実装手順までをMarkdownで整理します。'
+    ? `目的から仮説、要件、実装手順までを${planIsHtml ? '図と表を含むHTML' : 'Markdown'}で整理します。`
     : '検証のたびに増えるレポートを開いて、結論と根拠を確認できます。';
-  $('#file-path').textContent = `${task.storage_path}/plan.md`;
+  $('#file-path').textContent = `${task.storage_path}/${task.plan_file}`;
+  $('#file-label').textContent = task.plan_file;
+  $('#file-icon').textContent = planIsHtml ? '</>' : 'M↓';
   $('#task-path').textContent = `${task.storage_path}/`;
   $('#commit-history').textContent = task.commit_hashes?.length
     ? `このタスクのコミット: ${task.commit_hashes.map((hash) => hash.slice(0, 10)).join('、')}`
     : '';
   $('#markdown-editor').value = state.drafts.plan;
-  $('#markdown-editor').placeholder = '# 開発計画\n\n## 目的\nしてほしいことを一文で書く。\n\n## 現状と困っていること\n- 一つ目\n- 二つ目\n- 三つ目\n';
-  $('#plan-preview').replaceChildren(renderMarkdown(state.drafts.plan, task.id));
+  $('#markdown-editor').placeholder = planIsHtml
+    ? '<h1>開発計画</h1>\n\n<h2>目的</h2>\n<div class="callout note"><p><strong>してほしいことを一文で書く。</strong></p></div>\n\n<h2>現状と困っていること</h2>\n<ul><li>一つ目</li></ul>\n'
+    : '# 開発計画\n\n## 目的\nしてほしいことを一文で書く。\n\n## 現状と困っていること\n- 一つ目\n- 二つ目\n- 三つ目\n';
+  $('#markdown-editor').setAttribute('aria-label', planIsHtml ? 'HTML編集' : 'Markdown編集');
+  renderPlanPreview(task, planIsHtml);
   if (!state.drafts.plan.trim()) {
     const emptyPreview = document.createElement('p');
     emptyPreview.className = 'preview-empty';
@@ -456,7 +473,7 @@ function render() {
   $('#plan-preview').classList.toggle('hidden', state.planEditing);
   $('#markdown-editor').classList.toggle('hidden', !state.planEditing);
   $('#save-button').classList.toggle('hidden', !state.planEditing);
-  $('#plan-mode-toggle').textContent = state.planEditing ? 'プレビューに戻る' : 'Markdownを編集';
+  $('#plan-mode-toggle').textContent = state.planEditing ? 'プレビューに戻る' : planIsHtml ? 'HTMLを編集' : 'Markdownを編集';
   renderPlanHighlights();
   $('#plan-editor').classList.toggle('hidden', !isPlan);
   $('#save-indicator').classList.toggle('hidden', !isPlan);
@@ -478,6 +495,7 @@ function render() {
   $('#execute-button').disabled = migrationPending || Boolean(task.child_count) || !task.can_implement || state.drafts.plan !== task.plan || !agentAvailable() || !modelSelected() || busy || task.status === 'completed' || task.implementation?.state === 'running';
   $('#execute-button').title = task.readiness?.reason || 'Agentの実装可否判定を待っています';
   $('#readiness-reason').textContent = migrationPending ? '移行前のGit変更を確認してください。' : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
+  renderApproval(task, { busy: busy || migrationPending, dirty: state.drafts.plan !== task.plan });
   const childrenDone = state.tasks.filter((item) => item.parent_id === task.id).every((item) => item.status === 'completed');
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
   $('#summary-button').disabled = migrationPending || !childrenDone || busy || !agentAvailable() || !modelSelected();
@@ -551,6 +569,23 @@ function renderProposals() {
   }
 }
 
+function documentView(source, format, taskId, label) {
+  /** Read document source, its format, task ID, and label; return a sandboxed HTML frame or rendered Markdown. */
+  return format === 'html' ? renderHtmlDocument(source, taskId, label) : renderMarkdown(source, taskId);
+}
+
+function renderPlanPreview(task, planIsHtml) {
+  /** Render the plan draft preview for task, reusing an unchanged HTML frame; return nothing. */
+  const preview = $('#plan-preview');
+  const current = preview.firstElementChild;
+  const key = `${task.id}:${state.drafts.plan}`;
+  if (planIsHtml && current?.dataset.documentKey === key) return;
+  if (!state.drafts.plan.trim()) { preview.replaceChildren(); return; }
+  const view = documentView(state.drafts.plan, task.plan_format, task.id, '計画のプレビュー');
+  view.dataset.documentKey = key;
+  preview.replaceChildren(view);
+}
+
 function renderReports() {
   /** Render the selected task's reports as collapsible entries; return nothing. */
   const list = $('#report-list');
@@ -572,7 +607,7 @@ function renderReports() {
     number.className = 'report-number';
     number.textContent = `REPORT ${String(report.number).padStart(2, '0')}`;
     const title = document.createElement('strong');
-    title.textContent = planSection(report.content, '結論').replace(/\n/g, ' ') || `検証レポート ${report.number}`;
+    title.textContent = planSection(report.content, '結論', report.format).replace(/\n/g, ' ') || `検証レポート ${report.number}`;
     const meta = document.createElement('small');
     meta.textContent = `${outcomeLabels[report.outcome] || '結果を確認'} · ${new Date(report.created_at).toLocaleString('ja-JP')}`;
     summary.append(number, title, meta);
@@ -581,7 +616,7 @@ function renderReports() {
     const path = document.createElement('div');
     path.className = 'report-path';
     path.textContent = `${state.task.storage_path}/${report.file}`;
-    body.append(path, renderMarkdown(report.content, state.task.id));
+    body.append(path, documentView(report.content, report.format, state.task.id, `検証レポート ${report.number}`));
     card.append(summary, body);
     list.append(card);
   }
@@ -1027,11 +1062,20 @@ function bindEvents() {
   });
   $('#add-root').addEventListener('click', () => openCreate());
   $('#empty-add').addEventListener('click', () => openCreate());
+  $('#open-task-files').addEventListener('click', () => openFileBrowser({ repository: state.repository, taskId: state.task?.id }));
   $('#home-button').addEventListener('click', () => {
     if (hasChanges() && !window.confirm('未保存の変更を破棄してホームへ戻りますか？')) return;
     state.task = null;
     state.messages = [];
     render();
+    showHome(true).catch((error) => toast(error.message));
+  });
+  $('#approve-plan').addEventListener('click', async () => {
+    try {
+      state.task = await api(`/api/tasks/${state.task.id}/plan-approval`, { method: state.task.plan_approved ? 'DELETE' : 'POST' });
+      await refreshTasks();
+      render();
+    } catch (error) { toast(error.message); }
   });
   $('#focus-chat').addEventListener('click', () => $('#chat-input').focus());
   $('#cancel-run').addEventListener('click', async () => {
@@ -1290,8 +1334,8 @@ function bindEvents() {
   window.addEventListener('beforeunload', (event) => { if (hasChanges()) event.preventDefault(); });
 }
 
-async function switchRepository(repository) {
-  /** Load repository's task and Agent state into the view; return nothing. */
+async function switchRepository(repository, openFirst = true) {
+  /** Load repository's task and Agent state, optionally opening its first task; return nothing. */
   const agent = await api('/api/agent', {}, repository);
   const tasks = await api('/api/tasks', {}, repository);
   clearChatImages();
@@ -1306,14 +1350,27 @@ async function switchRepository(repository) {
   state.evidence = [];
   state.activeRuns.clear();
   $('#repository-select').value = repository;
-  if (tasks.length) await selectTask(tasks[0].id);
+  if (openFirst && tasks.length) await selectTask(tasks[0].id);
   else render();
+}
+
+async function openHomeTask(repository, taskId) {
+  /** Switch to repository when needed and open taskId from the home view; return nothing. */
+  if (repository !== state.repository) await switchRepository(repository, false);
+  await selectTask(taskId);
+}
+
+async function createHomeTask(repository) {
+  /** Switch to repository when needed and open the new task dialog; return nothing. */
+  if (repository !== state.repository) await switchRepository(repository, false);
+  openCreate();
 }
 
 async function main() {
   /** Initialize the local workspace; return when its first view is ready. */
   bindChatResize();
   bindEvents();
+  initHome({ api, toast, openTask: openHomeTask, createTask: createHomeTask, models: () => state.modelCatalog, providers: () => state.agentAvailability });
   setInterval(() => refreshUntrackedRun().catch(() => {}), 1500);
   setInterval(() => { if (state.tasks.some(isTaskBusy)) refreshTasks().catch(() => {}); }, 3000);
   $('#clock').textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -1322,7 +1379,7 @@ async function main() {
     const select = $('#repository-select');
     select.replaceChildren(...repositories.map((entry) => new Option(entry.name, entry.id)));
     const stored = window.localStorage.getItem('develop-agent.repository');
-    await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent');
+    await switchRepository(repositories.some((entry) => entry.id === stored) ? stored : 'develop-agent', false);
   } catch (error) { toast(error.message); }
 }
 

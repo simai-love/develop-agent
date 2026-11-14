@@ -7,13 +7,16 @@ export function setEvidenceRepository(id) {
   repositoryId = id;
 }
 
+export function evidenceUrl(taskId, name) {
+  /** Read a task ID and evidence filename; return the evidence API path for the current repository. */
+  const path = `/api/tasks/${taskId}/evidence/${encodeURIComponent(name)}`;
+  return repositoryId === 'develop-agent' ? path : `${path}?repo=${encodeURIComponent(repositoryId)}`;
+}
+
 function safeHref(value, taskId) {
   /** Convert a safe Markdown destination to a URL, or return null. */
   const evidence = value.match(/^(?:\.\.\/)?evidence\/([A-Za-z0-9._-]+)$/);
-  if (evidence && taskId) {
-    const path = `/api/tasks/${taskId}/evidence/${encodeURIComponent(evidence[1])}`;
-    return repositoryId === 'develop-agent' ? path : `${path}?repo=${encodeURIComponent(repositoryId)}`;
-  }
+  if (evidence && taskId) return evidenceUrl(taskId, evidence[1]);
   try {
     const url = new URL(value);
     return ['http:', 'https:'].includes(url.protocol) ? url.href : null;

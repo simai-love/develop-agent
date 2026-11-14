@@ -1,6 +1,7 @@
 """Store each task as readable files below the ignored tasks directory."""
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -39,8 +40,25 @@ def write_text(path: Path, content: str) -> None:
     os.replace(temporary_path, path)
 
 
+def plan_path(directory: Path) -> Path:
+    """Return a task directory's plan file: plan.html, or a legacy plan.md when only it exists."""
+    legacy = directory / "plan.md"
+    return legacy if legacy.exists() and not (directory / "plan.html").exists() else directory / "plan.html"
+
+
+def document_format(path: Path) -> str:
+    """Return "html" for an .html document path and "markdown" otherwise."""
+    return "html" if path.suffix == ".html" else "markdown"
+
+
+def initial_plan_html(title: str, sections: list[tuple[str, str]]) -> str:
+    """Build a plan HTML document from a title and (heading, text) pairs; return its source."""
+    body = "".join(f"<h2>{html.escape(heading)}</h2>\n<p>{html.escape(text)}</p>\n" for heading, text in sections)
+    return f"<h1>{html.escape(title)}</h1>\n{body}"
+
+
 def read_task(root: Path, task_id: str) -> dict:
-    """Read a task ID from root and return its metadata and Markdown content."""
+    """Read a task ID from root and return its metadata, plan, and report contents with their formats."""
     directory = task_dir(root, task_id)
     task = json.loads((directory / "task.json").read_text(encoding="utf-8"))
     task.setdefault("implementation", {"state": "not_started", "changed_files": []})
@@ -59,29 +77,37 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("merge_hash", None)
     task.setdefault("legacy_completed", False)
     task.setdefault("child_proposals", [])
-    task["plan"] = (directory / "plan.md").read_text(encoding="utf-8")
+    task.setdefault("plan_approval", None)
+    task.setdefault("auto_run_plan_hash", None)
+    plan_file = plan_path(directory)
+    task["plan"] = plan_file.read_text(encoding="utf-8") if plan_file.exists() else ""
+    task["plan_file"] = plan_file.name
+    task["plan_format"] = document_format(plan_file)
     reports = task.setdefault("reports", [])
-    legacy_result = (directory / "result.md").read_text(encoding="utf-8")
+    legacy_path = directory / "result.md"
+    legacy_result = legacy_path.read_text(encoding="utf-8") if legacy_path.exists() else ""
     if not reports and legacy_result.strip():
         reports.append({"number": 1, "file": "result.md", "created_at": task["updated_at"], "outcome": task["implementation"].get("validation_outcome", "inconclusive"), "changed_files": task["implementation"].get("changed_files", []), "evidence_files": []})
     for report in reports:
         report["content"] = (directory / report["file"]).read_text(encoding="utf-8")
+        report["format"] = document_format(Path(report["file"]))
     task["result"] = reports[-1]["content"] if reports else ""
     task["can_implement"] = bool(task["readiness"]["ready"] and task["readiness"]["plan_hash"] == plan_hash(task["plan"]) and task["plan"].strip())
     if task["status"] == "ready" and not task["can_implement"]:
         task["status"] = "planning"
+    task["plan_approved"] = bool(task["can_implement"] and task["plan_approval"] and task["plan_approval"]["plan_hash"] == plan_hash(task["plan"]))
     return task
 
 
 def plan_hash(plan: str) -> str:
-    """Hash plan Markdown input and return its stable digest."""
+    """Hash saved plan source (HTML or Markdown) and return its stable digest."""
     return hashlib.sha256(plan.encode("utf-8")).hexdigest()
 
 
 def save_metadata(root: Path, task: dict) -> None:
-    """Persist task metadata input without derived Markdown fields; return nothing."""
-    metadata = {key: value for key, value in task.items() if key not in ("plan", "result", "can_implement")}
-    metadata["reports"] = [{key: value for key, value in report.items() if key != "content"} for report in task["reports"]]
+    """Persist task metadata input without derived document fields; return nothing."""
+    metadata = {key: value for key, value in task.items() if key not in ("plan", "plan_file", "plan_format", "result", "can_implement", "plan_approved")}
+    metadata["reports"] = [{key: value for key, value in report.items() if key not in ("content", "format")} for report in task["reports"]]
     write_text(task_dir(root, task["id"]) / "task.json", json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -177,8 +203,7 @@ def create_task(root: Path, title: str, parent_id: str | None = None, project_id
         "reports": [],
     }
     write_text(directory / "task.json", json.dumps(task, ensure_ascii=False, indent=2) + "\n")
-    write_text(directory / "plan.md", initial_plan)
-    write_text(directory / "result.md", "")
+    write_text(directory / "plan.html", initial_plan)
     (directory / "reports").mkdir()
     (directory / "evidence").mkdir()
     (directory / "validation").mkdir()
@@ -219,7 +244,7 @@ def update_task(root: Path, task_id: str, changes: dict) -> dict:
             if task["implementation"]["state"] != "succeeded":
                 task["status"] = "planning"
     if "plan" in changes:
-        write_text(directory / "plan.md", changes["plan"])
+        write_text(plan_path(directory), changes["plan"])
     if "plan" in changes and changes["plan"] != task["plan"]:
         task["implementation"] = {"state": "not_started", "changed_files": []}
         task["status"] = "planning"
@@ -315,7 +340,7 @@ def update_child_proposal(root: Path, task_id: str, proposal_id: str, status: st
 
 def report_draft_path(root: Path, task_id: str) -> Path:
     """Return the temporary report path for task ID under root."""
-    return task_dir(root, task_id) / "report-draft.md"
+    return task_dir(root, task_id) / "report-draft.html"
 
 
 def append_report(root: Path, task_id: str, outcome: str, changed_files: list[str], evidence_files: list[str], provider: str, model: str, needs_followup: bool, report_kind: str = "validation", summary_basis: dict | None = None, commit_message: str = "") -> dict:
@@ -326,7 +351,7 @@ def append_report(root: Path, task_id: str, outcome: str, changed_files: list[st
     if not content.strip():
         raise ValueError("Agent did not write a report")
     number = len(task["reports"]) + 1
-    filename = f"reports/{number:04}.md"
+    filename = f"reports/{number:04}.html"
     write_text(task_dir(root, task_id) / filename, content)
     draft.unlink()
     task["reports"].append({"number": number, "file": filename, "created_at": now(), "outcome": outcome, "changed_files": changed_files, "evidence_files": evidence_files, "kind": report_kind, "summary_basis": summary_basis})
