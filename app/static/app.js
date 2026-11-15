@@ -148,6 +148,19 @@ function renderParallelChildren() {
   $('#parallel-button').disabled = parallelSelection.ids.size < 2 || isTaskBusy(parent);
 }
 
+function executeBlocker(task) {
+  /** Return why "実装に進む" cannot be used for task as {text, kind} (kind "readiness" can be fixed by asking the Agent), or null when it can. */
+  if (!task || task.status === 'completed') return null;
+  if (isTaskBusy(task)) return { text: 'Agentが作業中です。終わるまでお待ちください。', kind: 'busy' };
+  if (task.migration_pending) return { text: '移行前のGit変更を確認してください。', kind: 'other' };
+  if (task.child_count) return { text: '子タスクを持つ親では実装できません。子タスクごとに実装してください。', kind: 'other' };
+  if (!agentAvailable()) return { text: `${task.provider === 'claude' ? 'Claude Code' : 'Codex'} のCLIが見つかりません。インストールと認証を確認してください。`, kind: 'other' };
+  if (!modelSelected()) return { text: 'Codexのモデルが選ばれていません。チャット欄の「モデル」を選んでください。', kind: 'other' };
+  if (state.drafts.plan !== task.plan) return { text: '計画の編集が保存されていません。「変更を保存」を押してください。', kind: 'other' };
+  if (!task.can_implement) return { text: `${(task.readiness?.reason || 'Agentが実装可能と判断していません').replace(/[。.!！]$/, '')}。${task.plan.trim() ? 'チャットでAgentに再確認させると、押せるようになります。' : ''}`, kind: task.plan.trim() ? 'readiness' : 'other' };
+  return null;
+}
+
 function isTaskBusy(task) {
   /** Return whether the selected task has a running Agent request. */
   return Boolean(task && (state.activeRuns.has(task.id) || task.active || task.implementation?.state === 'running'));
@@ -501,8 +514,14 @@ function render() {
   $('#delete-task').disabled = subtreeIds(task.id).some((id) => isTaskBusy(state.tasks.find((item) => item.id === id)));
   $('#plan-empty').classList.toggle('hidden', !isPlan || Boolean(task.plan.trim()) || Boolean(state.drafts.plan.trim()));
   $('#execute-button').disabled = migrationPending || Boolean(task.child_count) || !task.can_implement || state.drafts.plan !== task.plan || !agentAvailable() || !modelSelected() || busy || task.status === 'completed' || task.implementation?.state === 'running';
-  $('#execute-button').title = task.readiness?.reason || 'Agentの実装可否判定を待っています';
-  $('#readiness-reason').textContent = migrationPending ? '移行前のGit変更を確認してください。' : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
+  const blocker = executeBlocker(task);
+  $('#execute-button').title = blocker ? blocker.text : '';
+  $('#readiness-reason').textContent = blocker && blocker.kind !== 'busy' ? blocker.text : task.can_implement ? 'Agentが計画を実装可能と判定しました。確認後に開始できます。' : task.readiness?.reason || 'Agentに計画を相談してください。';
+  const showBlocker = Boolean(blocker) && blocker.kind !== 'busy' && isPlan && task.plan.trim() !== '';
+  $('#blocked-callout').classList.toggle('hidden', !showBlocker);
+  $('#blocked-callout-reason').textContent = showBlocker ? blocker.text : '';
+  $('#blocked-callout-action').classList.toggle('hidden', !showBlocker || blocker.kind !== 'readiness');
+  $('#blocked-callout-action').disabled = busy || sendingChat || !agentAvailable() || !modelSelected();
   renderApproval(task, { busy: busy || migrationPending, dirty: state.drafts.plan !== task.plan });
   const childrenDone = state.tasks.filter((item) => item.parent_id === task.id).every((item) => item.status === 'completed');
   const summaryReady = task.reports?.at(-1)?.kind === 'summary';
@@ -1097,6 +1116,10 @@ function bindEvents() {
     } catch (error) { toast(error.message); }
   });
   $('#focus-chat').addEventListener('click', () => $('#chat-input').focus());
+  $('#blocked-callout-action').addEventListener('click', () => {
+    if (state.planEditing && hasChanges()) { toast('先に計画の変更を保存してください'); return; }
+    sendChat('この計画で実装できるか、現在のCLI・モデルのまま再確認してください。').catch((error) => toast(error.message));
+  });
   $('#cancel-run').addEventListener('click', async () => {
     const run = state.activeRuns.get(state.task?.id);
     if (!run || run.cancel_requested) return;
