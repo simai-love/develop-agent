@@ -334,6 +334,9 @@ class TaskWorkflowTest(unittest.TestCase):
         added = [argv[index + 1] for index, value in enumerate(argv) if value == "--add-dir"]
         self.assertIn(str(self.repo), added)
         self.assertIn(str(self.service.git.worktrees / task["branch"].replace("/", "__")), added)
+        admin = [path for path in added if "/.git/worktrees/" in path]
+        self.assertEqual(len(admin), 1)
+        self.assertTrue(admin[0].endswith(task["branch"].replace("/", "__")))
         self.assertEqual(task["status"], "completed")
 
     def test_code_unchanged_task_completes_without_commit_and_removes_branch(self):
