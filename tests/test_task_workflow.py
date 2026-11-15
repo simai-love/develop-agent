@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.agent import AgentManager
 from app.storage import append_report, read_chat, read_task, report_draft_path, set_implementation, set_readiness, task_dir, update_task, write_text
+from app.task_status import display_status
 from app.task_workflow import TaskWorkflowService
 from app.workflow import WorkflowService
 
@@ -300,6 +301,89 @@ class TaskWorkflowTest(unittest.TestCase):
         diagnostics = list((task_dir(self.service.tasks_root, task["id"]) / "diagnostics").glob("completion-*.json"))
         self.assertEqual(len(diagnostics), 1)
         self.assertIn("認証に失敗しました", json.loads(diagnostics[0].read_text(encoding="utf-8"))["stdout_tail"])
+
+    ASKING = (
+        "import json, re, subprocess, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "assert '未追跡ファイル' in prompt and '_completion-moved' in prompt\n"
+        "path = sys.argv[sys.argv.index('--output-last-message') + 1]\n"
+        "open(path, 'w', encoding='utf-8').write(json.dumps({'message': '確認が必要です', 'needs_user_input': True, 'question': 'notes.txt が統合先にあります。退避してよいですか？'}, ensure_ascii=False))\n"
+    )
+
+    def fake_manager(self, script: str) -> AgentManager:
+        """Return an AgentManager whose CLI runs script; the manager is also set on the service."""
+        cli = self.repo.parent / f"fake-completion-{abs(hash(script))}"
+        cli.write_text(f"#!{sys.executable}\n{script}", encoding="utf-8")
+        cli.chmod(0o755)
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path=str(cli), workflow=self.service)
+        self.service.agent = manager
+        return manager
+
+    def wait_idle(self, manager: AgentManager) -> None:
+        """Block until manager has no active task or five seconds pass; return nothing."""
+        deadline = time.monotonic() + 10
+        while manager.active_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    def test_dirty_target_no_longer_blocks_the_agent_run(self):
+        """Start the Agent even when dev has an untracked file, and tell it which files are there."""
+        task = self.ready_task("統合先が汚れている", {"api.txt": "api\n"})
+        (self.repo / "notes.txt").write_text("mine\n", encoding="utf-8")
+        operations = self.service.begin_agent_completion(task["id"], self.service.completion_preview(task["id"]))
+        self.assertEqual(operations["target_dirty"], {"untracked": ["notes.txt"], "tracked": []})
+        prompt = AgentManager(self.service.tasks_root, self.repo, cli_path="/bin/true", workflow=self.service)._completion_prompt(
+            task["id"], operations, self.service.code_path(task["id"]), self.repo, "")
+        self.assertIn('["notes.txt"]', prompt)
+        self.assertIn("削除せず", prompt)
+        self.assertIn("質問", prompt)
+
+    def test_agent_question_waits_for_chat_answer_then_resumes(self):
+        """Keep the task open when the Agent asks, show it as waiting, and finish after a chat answer."""
+        task = self.ready_task("質問する", {"api.txt": "api\n", "ui.txt": "ui\n"})
+        (self.repo / "notes.txt").write_text("mine\n", encoding="utf-8")
+        manager = self.fake_manager(self.ASKING)
+        run = manager.start_completion(task["id"], self.service.completion_preview(task["id"]))
+        self.wait_idle(manager)
+        self.assertEqual(manager.get_run(run["id"])["state"], "needs_input")
+        waiting = read_task(self.service.tasks_root, task["id"])
+        self.assertNotEqual(waiting["status"], "completed")
+        self.assertIn("退避してよいですか", waiting["completion_waiting"]["question"])
+        self.assertEqual(display_status(waiting, [], False)["label"], "質問あり")
+        self.assertTrue(self.service.git.has_branch(waiting["branch"]))
+        chat = read_chat(self.service.tasks_root, task["id"], "result")
+        self.assertEqual(chat[-1]["role"], "assistant")
+        self.assertIn("このチャットに回答してください", chat[-1]["content"])
+        with self.assertRaisesRegex(ValueError, "02 検証結果のチャット"):
+            manager.start_chat(task["id"], "plan", "計画を直したい")
+        with self.assertRaisesRegex(ValueError, "文章だけで回答"):
+            manager.start_chat(task["id"], "result", "")
+        move_notes = (
+            "import os, re, shutil\n"
+            "moved = re.search(r'`([^`]+/_completion-moved/\\w+)/`', prompt).group(1)\n"
+            "os.makedirs(moved)\n"
+            "shutil.move(os.path.join(os.getcwd(), 'notes.txt'), moved)\n"
+        )
+        manager = self.fake_manager(FAKE_COMPLETION + move_notes + "complete(['api.txt', 'ui.txt'])\n")
+        resumed = manager.start_chat(task["id"], "result", "退避してください")
+        self.assertEqual(resumed["kind"], "commit")
+        self.wait_idle(manager)
+        done = read_task(self.service.tasks_root, task["id"])
+        self.assertEqual(done["status"], "completed", manager.get_run(resumed["id"])["message"])
+        self.assertIsNone(done["completion_waiting"])
+        chat = read_chat(self.service.tasks_root, task["id"], "result")
+        self.assertEqual(chat[-2]["content"], "退避してください")
+        self.assertFalse((self.repo / "notes.txt").exists())
+        self.assertTrue(list((self.service.git.worktrees / "_completion-moved").glob("*/notes.txt")))
+
+    def test_resume_requires_reconfirmation_when_more_files_changed(self):
+        """Refuse to resume from a chat answer when new files appeared after the question."""
+        task = self.ready_task("変更が増えた", {"api.txt": "api\n"})
+        manager = self.fake_manager(self.ASKING)
+        manager.start_completion(task["id"], self.service.completion_preview(task["id"]))
+        self.wait_idle(manager)
+        (self.service.code_path(task["id"]) / "extra.txt").write_text("new\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "確認し直して"):
+            manager.start_chat(task["id"], "result", "進めてください")
 
     def test_unexpected_worker_error_releases_task(self):
         """Mark a run failed and release its task when the worker raises an unexpected error."""

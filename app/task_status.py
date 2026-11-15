@@ -15,6 +15,8 @@ def display_status(task: dict, plan_messages: list[dict], active: bool, children
         return status("completed", "完了", "タスクは完了しています", "done")
     if active or task["implementation"]["state"] == "running":
         return status("running", "実行中", "Agentが作業しています", "agent")
+    if task.get("completion_waiting"):
+        return status("questions", "質問あり", "Agentの完了確認に、チャットで回答", "user")
     if task.get("last_run_cancelled"):
         return status("review", "確認待ち", "中断しました。変更を確認して再実行")
     if task.get("commit_pending"):

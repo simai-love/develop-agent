@@ -493,7 +493,7 @@ function render() {
   renderParallelChildren();
   $('#evidence-section').classList.toggle('hidden', isPlan);
   $('#chat-context').textContent = isPlan ? '計画について議論' : '検証・修正について議論';
-  $('#chat-input').placeholder = isPlan ? 'Agentに相談する内容を入力' : task.child_count ? '子タスクの総括ボタンを使用してください' : task.implementation?.changed_files?.length ? '追加検証や修正したいことを入力' : '実装後に追加検証や修正を依頼できます';
+  $('#chat-input').placeholder = task.completion_waiting ? 'Agentの完了確認への回答を入力（文章のみ）' : isPlan ? 'Agentに相談する内容を入力' : task.child_count ? '子タスクの総括ボタンを使用してください' : task.implementation?.changed_files?.length ? '追加検証や修正したいことを入力' : '実装後に追加検証や修正を依頼できます';
   const busy = isTaskBusy(task);
   renderAgentProgress();
   $('#rename-task').disabled = busy;
@@ -820,7 +820,7 @@ function renderChat() {
     container.append(card);
   }
   container.scrollTop = container.scrollHeight;
-  const canChat = agentAvailable() && modelSelected() && !busy && !sendingChat && state.task.status !== 'completed' && (state.tab === 'plan' || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length)));
+  const canChat = agentAvailable() && modelSelected() && !busy && !sendingChat && state.task.status !== 'completed' && (state.tab === 'plan' || Boolean(state.task.completion_waiting) || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length)));
   $('#chat-input').disabled = !canChat;
   $('#chat-send').disabled = !canChat;
   $('#chat-image-input').disabled = !canChat;
@@ -916,11 +916,12 @@ async function pollRun(runId, taskId, repository) {
       state.task = await api(`/api/tasks/${taskId}`);
       state.drafts = { plan: state.task.plan, result: state.task.result };
       state.planEditing = false;
+      if (run.state === 'needs_input') state.tab = 'result';
       await loadChat();
       await loadEvidence();
       render();
     }
-    toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : run.state === 'cancelled' ? run.message : `Agentの実行に失敗しました: ${run.message}`);
+    toast(run.state === 'succeeded' ? 'Agentの実行が完了しました' : run.state === 'needs_input' ? 'Agentから完了について確認があります。チャットで回答してください' : run.state === 'cancelled' ? run.message : `Agentの実行に失敗しました: ${run.message}`);
     break;
   }
 }
@@ -961,7 +962,7 @@ async function selectTask(id) {
   clearChatImages();
   state.task = await api(`/api/tasks/${id}`);
   state.drafts = { plan: state.task.plan, result: state.task.result };
-  state.tab = 'plan';
+  state.tab = state.task.completion_waiting ? 'result' : 'plan';
   state.planEditing = false;
   state.messages = [];
   state.evidence = [];

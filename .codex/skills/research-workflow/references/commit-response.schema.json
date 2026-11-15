@@ -1,8 +1,20 @@
 {
   "type": "object",
   "properties": {
-    "message": {"type": "string"}
+    "message": {
+      "type": "string"
+    },
+    "needs_user_input": {
+      "type": "boolean"
+    },
+    "question": {
+      "type": "string"
+    }
   },
-  "required": ["message"],
+  "required": [
+    "message",
+    "needs_user_input",
+    "question"
+  ],
   "additionalProperties": false
 }

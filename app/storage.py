@@ -77,6 +77,7 @@ def read_task(root: Path, task_id: str) -> dict:
     task.setdefault("merge_hash", None)
     task.setdefault("legacy_completed", False)
     task.setdefault("child_proposals", [])
+    task.setdefault("completion_waiting", None)
     task.setdefault("plan_approval", None)
     task.setdefault("auto_run_plan_hash", None)
     plan_file = plan_path(directory)
@@ -292,6 +293,7 @@ def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: st
         raise ValueError("Invalid completion kind")
     task = read_task(root, task_id)
     task["status"] = "completed"
+    task["completion_waiting"] = None
     task["completed_at"] = now()
     task["updated_at"] = now()
     if kind == "legacy":
@@ -300,6 +302,15 @@ def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: st
         task["commit_hash" if kind == "commit" else "merge_hash"] = git_hash
         if kind == "commit" and git_hash and git_hash not in task["commit_hashes"]:
             task["commit_hashes"].append(git_hash)
+    save_metadata(root, task)
+    return read_task(root, task_id)
+
+
+def set_completion_waiting(root: Path, task_id: str, waiting: dict | None) -> dict:
+    """Store the Agent's pending completion question (or None to clear it) for task_id; return its record."""
+    task = read_task(root, task_id)
+    task["completion_waiting"] = waiting
+    task["updated_at"] = now()
     save_metadata(root, task)
     return read_task(root, task_id)
 
