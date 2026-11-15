@@ -325,6 +325,17 @@ class TaskWorkflowTest(unittest.TestCase):
         while manager.active_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
 
+    def test_completion_agent_may_write_both_checkouts(self):
+        """List the task checkout and the target checkout as writable so Git can commit and merge in both."""
+        record = self.repo.parent / "argv.json"
+        script = f"import json\nopen({str(record)!r}, 'w').write(json.dumps(sys.argv))\n"
+        task = self.run_completion(FAKE_COMPLETION.replace("prompt = sys.stdin.read()\n", "prompt = sys.stdin.read()\n" + script, 1) + "complete(['api.txt', 'ui.txt'])\n", "")
+        argv = json.loads(record.read_text(encoding="utf-8"))
+        added = [argv[index + 1] for index, value in enumerate(argv) if value == "--add-dir"]
+        self.assertIn(str(self.repo), added)
+        self.assertIn(str(self.service.git.worktrees / task["branch"].replace("/", "__")), added)
+        self.assertEqual(task["status"], "completed")
+
     def test_dirty_target_no_longer_blocks_the_agent_run(self):
         """Start the Agent even when dev has an untracked file, and tell it which files are there."""
         task = self.ready_task("統合先が汚れている", {"api.txt": "api\n"})
