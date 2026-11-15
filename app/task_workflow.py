@@ -222,8 +222,9 @@ class TaskWorkflowService:
             else:
                 raise ValueError("このタスクはAgentで統合できません")
             target = self.merge_target(task_id)
-            if not self.git.clean(self.git.ensure(target)):
-                raise ValueError("統合先の作業ツリーの変更を整理してください")
+            target_path = self.git.ensure(target)
+            untracked = sorted(self.git.untracked(target_path))
+            dirty = {"untracked": untracked, "tracked": [path for path in self.git.changed(target_path) if path not in untracked]}
             merge = self.begin_operation(task_id, "agent_merge", preview["branch"], target)
             if preview["kind"] == "commit":
                 commit = self.begin_operation(task_id, "agent_commit", preview["branch"])
@@ -231,7 +232,7 @@ class TaskWorkflowService:
                 self.record_operation(task_id, commit)
             merge.update(target_head=self.git.head(target), source_head=None if commit else preview["head"], message=f"{task['title']}を統合")
             self.record_operation(task_id, merge)
-            return {"commit": commit, "merge": merge}
+            return {"commit": commit, "merge": merge, "target_dirty": dirty}
 
     def finish_agent_completion(self, operations: dict) -> dict:
         """Verify an Agent run's commits and merge from operations; return the completed task."""

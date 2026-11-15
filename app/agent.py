@@ -15,7 +15,7 @@ from app.claude_response import read_claude_response, save_diagnostic
 from app.attachments import validate_chat_files
 from app.evidence import evidence_rule, list_evidence, validate_chat_images
 from app.model_catalog import claude_models, codex_models
-from app.storage import append_chat, append_report, delete_task, list_tasks, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
+from app.storage import append_chat, append_report, delete_task, list_tasks, now, plan_hash, read_chat, read_task, report_draft_path, save_child_proposals, set_completion_waiting, set_implementation, set_readiness, set_run_cancelled, task_dir, task_subtree, write_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent / ".codex" / "skills" / "research-workflow"
@@ -140,6 +140,12 @@ class AgentManager:
             raise ValueError("Completed tasks cannot be edited")
         if phase not in {"plan", "result"}:
             raise ValueError("Invalid chat phase")
+        if phase == "plan" and task["completion_waiting"]:
+            raise ValueError("Agentの完了確認があります。02 検証結果のチャットで回答してください")
+        if phase == "result" and task["completion_waiting"]:
+            if not isinstance(message, str) or not message.strip() or images or files:
+                raise ValueError("Agentの完了確認には、文章だけで回答してください")
+            return self.resume_completion(task_id, message)
         if phase == "result" and self.workflow and self.workflow.children(task_id):
             raise ValueError("親タスクでは子タスクの総括を実行してください")
         if phase == "result" and not task["implementation"].get("changed_files"):
@@ -190,7 +196,18 @@ class AgentManager:
             raise ValueError("全ての子タスクを完了してください")
         return self._start(task_id, "summary", "result", "", additional_instruction)
 
-    def start_completion(self, task_id: str, expected: dict, instruction: str = "") -> dict:
+    def resume_completion(self, task_id: str, answer: str) -> dict:
+        """Answer the Agent's pending completion question with answer and rerun the completion; return its run record."""
+        waiting = read_task(self.tasks_root, task_id)["completion_waiting"]
+        if not waiting:
+            raise ValueError("Agentの完了確認はありません")
+        preview = self.workflow.completion_preview(task_id)
+        if preview["kind"] == "commit" and not set(preview["paths"]) <= set(waiting["paths"]):
+            raise ValueError("質問のあとに変更が増えました。「タスクを完了」から確認し直してください")
+        instruction = f"Agentの質問: {waiting['question']}\nユーザーの回答: {answer.strip()}"
+        return self.start_completion(task_id, preview, instruction, answer.strip())
+
+    def start_completion(self, task_id: str, expected: dict, instruction: str = "", answer: str | None = None) -> dict:
         """Start an approved Agent run that commits task ID's changes if needed and merges it; return its run record."""
         if not isinstance(instruction, str):
             raise ValueError("コミット・統合の方針は文字列で入力してください")
@@ -206,7 +223,8 @@ class AgentManager:
             operations = self.workflow.begin_agent_completion(task_id, expected)
             kind = "commit" if operations["commit"] else "merge"
             request = "タスク完了のコミットと統合を指示しました。" if kind == "commit" else "タスクの統合を指示しました。"
-            append_chat(self.tasks_root, task_id, "result", "user", f"{request}\n方針: {instruction.strip() or 'なし'}")
+            append_chat(self.tasks_root, task_id, "result", "user", answer if answer is not None else f"{request}\n方針: {instruction.strip() or 'なし'}")
+            set_completion_waiting(self.tasks_root, task_id, None)
             run_id = uuid4().hex
             run = {"id": run_id, "task_id": task_id, "kind": kind, "phase": "result", "state": "running", "message": "", "model": task["model"], "provider": task["provider"], "activity": [], "cancel_requested": False, "cancelable": True}
             self.runs[run_id] = run
@@ -252,9 +270,18 @@ class AgentManager:
                 self.runs[run_id]["cancelable"] = False
             if result.returncode:
                 error = cli_error(result.stdout) or result.stderr or f"{run['provider']} CLI failed"
-            reply = self._commit_reply(run["provider"], result, output_path, diagnostic_path)
-            self.workflow.finish_agent_completion(operations)
-            outcome = {"state": "succeeded", "message": "統合し、タスクを完了しました"}
+            response = self._commit_response(run["provider"], result, output_path, diagnostic_path)
+            reply = response["message"]
+            if response["needs_user_input"] and response["question"].strip():
+                question = response["question"].strip()
+                aborted = self.workflow.abandon_agent_merge(merge)
+                if operations["commit"] and self.workflow.git.head(merge["branch"]) != operations["commit"]["base_head"]:
+                    self.workflow.reconcile_agent_commit(operations["commit"], merge)
+                set_completion_waiting(self.tasks_root, task_id, {"question": question, "asked_at": now(), "paths": operations["commit"]["expected_paths"] if operations["commit"] else []})
+                outcome = {"state": "needs_input", "message": question}
+            else:
+                self.workflow.finish_agent_completion(operations)
+                outcome = {"state": "succeeded", "message": "統合し、タスクを完了しました"}
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as failure:
             detail = str(failure)
             cancelled = self.cancel_events[run_id].is_set()
@@ -266,6 +293,14 @@ class AgentManager:
             output_path.unlink(missing_ok=True)
         task = read_task(self.tasks_root, task_id)
         created = [commit for commit in task["commit_hashes"] if commit not in previous_hashes]
+        if outcome["state"] == "needs_input":
+            append_chat(self.tasks_root, task_id, "result", "assistant", f"{outcome['message']}\n\n完了はまだ終わっていません。このチャットに回答してください。回答すると続きから実行します。", provider=run["provider"], model=run["model"])
+            with self.lock:
+                self.runs[run_id].update(outcome)
+                self.active_tasks.discard(task_id)
+                self.merge_targets.pop(merge["destination"], None)
+                self.cancel_events.pop(run_id, None)
+            return
         lines = [outcome["message"] if outcome["state"] != "failed" else f"コミット・統合に失敗しました: {outcome['message']}"]
         if operations["commit"]:
             lines.append(f"作成したコミット: {', '.join(commit[:10] for commit in created) or 'なし'}")
@@ -287,13 +322,14 @@ class AgentManager:
             self.merge_targets.pop(merge["destination"], None)
             self.cancel_events.pop(run_id, None)
 
-    def _commit_reply(self, provider: str, result: subprocess.CompletedProcess, output_path: Path, diagnostic_path: Path) -> str:
-        """Return the Agent's commit summary from CLI output, or an empty string when none is readable."""
+    def _commit_response(self, provider: str, result: subprocess.CompletedProcess, output_path: Path, diagnostic_path: Path) -> dict:
+        """Return the Agent's completion report from CLI output as message, needs_user_input, and question; fields default to empty or False when unreadable."""
         try:
             response = json.loads(output_path.read_text(encoding="utf-8")) if provider == "codex" else read_claude_response(result, diagnostic_path)
         except (OSError, RuntimeError, ValueError):
-            return ""
-        return response.get("message", "") if isinstance(response, dict) else ""
+            response = {}
+        response = response if isinstance(response, dict) else {}
+        return {"message": str(response.get("message", "")), "needs_user_input": response.get("needs_user_input") is True, "question": str(response.get("question", ""))}
 
     def _guard(self, worker, run_id: str, *args: object) -> None:
         """Run worker for run ID and, if it raises unexpectedly, mark the run failed and release its task; return nothing."""
@@ -335,12 +371,25 @@ class AgentManager:
                 f"\nTask-Operation: {commit['id']}\n対象ファイル: {json.dumps(commit['expected_paths'], ensure_ascii=False)}\n"
                 "全ての変更をコミットし、作業ツリーを空にしてください。"
             )
+        dirty = operations.get("target_dirty") or {"tracked": [], "untracked": []}
+        moved = self.workflow.git.worktrees / "_completion-moved" / merge["id"][:8]
+        steps.append(
+            f"統合先 {merge['destination']} の作業場所 {target_path}（現在のディレクトリ）の状態を `git status` で確認してください。"
+            f"起動時点の記録: 未追跡ファイル {json.dumps(dirty['untracked'], ensure_ascii=False)}、追跡中の未コミット変更 {json.dumps(dirty['tracked'], ensure_ascii=False)}。"
+            "統合前に統合先の作業ツリーをきれいにする必要があります。判断は次のとおりです。\n"
+            f"- 未追跡ファイルはユーザーの持ち物かもしれません。削除せず、`{moved}/` へ元の相対パスのまま移動して退避し、移動先を報告してください。"
+            "ただしマージで同名のファイルが入る場合は、上書きせず退避してからマージしてください。\n"
+            "- 追跡中の未コミット変更（編集済みファイル）は、stash、reset、checkout、コミットなどで勝手に動かさず、マージを始めずに質問してください。\n"
+            "- 原因が分からない、またはこれ以外で判断に迷う状態も、何も変更せずに質問してください。\n"
+            "質問するときは、JSON の needs_user_input を true、question に「何が起きたか・選択肢・あなたのおすすめ」を日本語の文章で簡潔に書いてください。"
+            "質問する場合は、それまでにマージを始めていれば `git merge --abort` で元に戻してください。"
+        )
         steps.append(
             f"統合先 {merge['destination']} の作業場所 {target_path}（現在のディレクトリ）で次のコマンドを実行してください。\n"
             f"{shlex.join(['git', 'merge', '--no-ff', '-m', merge['message'], '-m', 'Task-Operation: ' + merge['id'], merge['branch']])}\n"
             "競合した場合は、競合したファイルだけを両方の変更の意図を保って解決し、それ以外のファイルは変更しないでください。"
             "解決後は `git add` してから `git commit --no-edit` でマージを完了し、メッセージの Task-Operation 行を残してください。"
-            "確実に解決できない場合は `git merge --abort` で元に戻し、理由を返してください。"
+            "確実に解決できない場合は `git merge --abort` で元に戻し、needs_user_input を true にして、どのファイルで何が競合したかと解決案を question に書いてください。"
         )
         steps.append(
             f"マージが成功した場合だけ、{target_path} で `git worktree remove {source_path}` と `git branch -d {merge['branch']}` を実行し、作業ブランチを削除してください。"
@@ -350,7 +399,9 @@ class AgentManager:
             + "".join(f"{number}. {step}\n" for number, step in enumerate(steps, 1))
             + "コード、計画、レポートを変更せず、対象外のファイルをコミットしないでください。"
             "rebase、reset、amend、cherry-pick、push、強制オプション、指示にないブランチの操作は行わないでください。"
-            "終わったらJSONで結果を短く返してください。\n"
+            "終わったらJSONで結果を短く返してください。質問がなければ needs_user_input は false、question は空文字にしてください。\n"
+            f"最新の検証の結果: {task['implementation'].get('validation_outcome') or '不明'}（supported は仮説を支持）、追加の検証が必要: {'はい' if task['implementation'].get('needs_followup') else 'いいえ'}。"
+            "結果が仮説を支持していない、または追加の検証が必要と記録されていて、ユーザーの方針でそれを承知の上と分からない場合は、統合せずに質問してください。\n"
             f"最初に {SKILL_ROOT / 'SKILL.md'} を読んでください。\n"
             f"タスク: {task['title']}\n"
             + (f"ユーザーのコミット・統合の方針:\n{instruction}\n" if instruction else "")
