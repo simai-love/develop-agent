@@ -1333,3 +1333,7 @@ dialog input:focus,dialog textarea:focus,dialog select:focus {
 .chat-message-files a { text-decoration:none }
 .chat-message-files .chat-file-chip { padding-right:10px }
 .chat-compose.drag-over { outline:2px dashed #8fd3ff; outline-offset:-4px }
+.blocked-callout { border-color:#4f7f90; border-left-color:#6bb8d0; background:#1b2c33; color:#d3e8ef; }
+.blocked-callout p { color:#a9cbd7; }
+.blocked-callout .question-callout-icon { background:#2c5361; color:#d6f0f8; }
+.blocked-callout .secondary-button { border-color:#4f7f90; background:#244351; color:#d6f0f8; }
