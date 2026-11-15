@@ -1,26 +1,28 @@
 /* Home board, memo, report, and task stage styles. */
-.home-view { padding:34px 42px 70px; max-width:1600px; margin:auto }
-.home-head { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:20px }
-.home-head h1 { font-size:28px; letter-spacing:-.03em; margin:8px 0 6px; font-weight:600 }
+.home-view { padding:18px 42px 60px; max-width:1600px; margin:auto }
+.home-head { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:12px }
+.home-head h1 { font-size:22px; letter-spacing:-.03em; margin:4px 0 0; font-weight:600 }
 .home-head p { color:#8d9a90; font-size:12px; margin:0; line-height:1.7 }
-.home-toolbar { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:22px }
+.home-toolbar { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:14px }
 .home-segment { display:flex; align-items:center; gap:2px; border:1px solid #344036; border-radius:7px; padding:3px; background:#171d18 }
 .home-segment-label { color:#80907f; font-size:10px; padding:0 8px }
 .home-segment button { border:0; background:transparent; color:#aebdaf; font-size:11px; padding:6px 10px; border-radius:5px }
 .home-segment button.active { background:#2f4232; color:#d8f2d9 }
-.home-projects { display:flex; flex-direction:column; gap:28px }
+.home-projects { display:flex; flex-direction:column; gap:12px }
 .home-loading,.home-empty { color:#7d8a7f; font-size:12px; margin:6px 0 }
 .home-error { color:#e6aaa5; font-size:12px }
-.home-project { border:1px solid #2d372e; border-radius:10px; background:#141914cc; padding:18px }
-.home-project-head { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-bottom:16px }
+.home-project { border:1px solid #2d372e; border-radius:10px; background:#141914cc; padding:12px 14px }
+.home-project-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:10px }
+.home-project.collapsed .home-project-head { margin-bottom:0 }
+.home-project.collapsed .home-body { display:none }
 .home-project-head > div:first-child { flex:1; min-width:200px }
 .home-project-head h2 { font-size:17px; margin:0 0 3px }
 .home-project-head small { color:#7d8a7f; font-size:10px; overflow-wrap:anywhere }
 .home-agent { display:flex; align-items:center; gap:6px; font-size:11px; color:#a9b8aa }
 .home-agent select { background:#1c241d; color:#d6e3d7; border:1px solid #3a483c; border-radius:5px; padding:6px; font-size:11px; max-width:180px }
-.home-layout { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start }
+.home-body { display:flex; flex-direction:column; gap:10px }
 .home-board { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; align-content:start }
-.home-card { display:flex; flex-direction:column; gap:7px; text-align:left; border:1px solid #334035; border-left:3px solid #4a5a4c; border-radius:8px; background:#1b221c; color:#e2e9e3; padding:12px 13px; min-height:118px }
+.home-card { display:flex; flex-direction:column; gap:5px; text-align:left; border:1px solid #334035; border-left:3px solid #4a5a4c; border-radius:8px; background:#1b221c; color:#e2e9e3; padding:9px 11px; min-height:0 }
 .home-card:hover { background:#212a22; border-color:#4b6150 }
 .home-card-title { font-size:13px; line-height:1.4; overflow-wrap:anywhere }
 .home-card-chips { display:flex; flex-wrap:wrap; gap:5px }
@@ -119,3 +121,41 @@ button.home-chip { cursor:pointer }
 .home-card.drop-after { box-shadow:4px 0 0 #8fd3ff }
 .home-project.drop-before { box-shadow:0 -4px 0 #8fd3ff }
 .home-project.drop-after { box-shadow:0 4px 0 #8fd3ff }
+
+/* One-screen overview of every project, and folding for each project's board and records. */
+.home-overview-box { border:1px solid #2d372e; border-radius:10px; background:#141914cc; padding:10px 14px; margin-bottom:14px }
+.home-ov-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:10px }
+.home-ov-stat { display:flex; align-items:baseline; gap:8px; justify-content:center; border:1px solid currentColor; border-radius:8px; padding:7px 10px; background:transparent; font-size:12px; cursor:pointer }
+.home-ov-stat b { font-size:24px; font-family:'DM Mono',monospace; line-height:1 }
+.home-ov-stat span { font-weight:600 }
+.home-ov-stat.zero { opacity:.5 }
+.home-ov-stat.agent,.home-ov-nums .agent,.home-ov-task.agent,.home-ov-bar i.agent { color:#8fd3ff }
+.home-ov-stat.user,.home-ov-nums .user,.home-ov-task.user,.home-ov-bar i.user { color:#ffd27a }
+.home-ov-stat.scheduled,.home-ov-nums .scheduled,.home-ov-task.scheduled,.home-ov-bar i.scheduled { color:#c5a8ff }
+.home-ov-stat.done,.home-ov-nums .done,.home-ov-bar i.done { color:#86a98b }
+.home-ov-rows { display:flex; flex-direction:column }
+.home-ov-row { display:grid; grid-template-columns:150px 150px minmax(190px,auto) minmax(0,1fr); gap:6px 14px; align-items:center; border-top:1px solid #29322a; padding:7px 0 }
+.home-ov-name { border:0; background:none; color:#e2e9e3; font-size:13px; font-weight:700; text-align:left; padding:0; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.home-ov-name:hover { text-decoration:underline }
+.home-ov-bar { display:flex; height:8px; border-radius:4px; overflow:hidden; background:#222a23; gap:1px }
+.home-ov-bar i { background:currentColor; min-width:4px }
+.home-ov-nums { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; font-weight:600 }
+.home-ov-tasks { display:flex; flex-wrap:wrap; gap:5px; min-width:0 }
+.home-ov-task { display:inline-flex; align-items:center; gap:6px; max-width:100%; border:1px solid currentColor; border-radius:999px; padding:2px 9px; background:transparent; font-size:11px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.home-ov-task:hover { background:#ffffff10 }
+.home-ov-task .home-owner-dot { flex:none }
+.home-ov-more { color:#7d8a7f; font-size:11px }
+.home-fold { border:0; background:none; color:#8fa092; font-size:13px; padding:0 8px 0 2px; cursor:pointer }
+.home-fold:hover { color:#e2e9e3 }
+.home-side-details { border:1px solid #2d372e; border-radius:8px; background:#171d18 }
+.home-side-details > summary { cursor:pointer; padding:7px 12px; font-size:11px; color:#9eac9f }
+.home-side-details[open] > summary { border-bottom:1px solid #2d372e; margin-bottom:10px }
+.home-side-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:0 12px 12px }
+@media (max-width:900px) {
+  .home-view { padding:14px 16px 50px }
+  .home-ov-stats { grid-template-columns:repeat(2,minmax(0,1fr)) }
+  .home-ov-row { grid-template-columns:minmax(0,1fr) 120px; }
+  .home-ov-nums,.home-ov-tasks { grid-column:1/-1 }
+  .home-side-grid { grid-template-columns:1fr }
+}
+.home-project.idle { padding-bottom:8px }
