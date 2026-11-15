@@ -272,7 +272,7 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertEqual(chat[-1]["role"], "system")
         self.assertIn(task["commit_hashes"][-1][:10], chat[-1]["content"])
         self.assertIn(f"→ dev ({task['merge_hash'][:10]})", chat[-1]["content"])
-        self.assertNotIn("GUIが削除", chat[-1]["content"])
+        self.assertIn("GUIが削除しました", chat[-1]["content"])
         self.assertIn("完了しました", chat[-1]["content"])
         self.assertFalse((task_dir(self.service.tasks_root, task["id"]) / "diagnostics").exists())
 
@@ -324,6 +324,22 @@ class TaskWorkflowTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while manager.active_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
+
+    def test_agent_is_told_not_to_remove_the_worktree_and_unclean_message_names_files(self):
+        """Keep worktree removal out of the Agent's steps and name the leftover files when a worktree is unclean."""
+        task = self.ready_task("片付けはGUI", {"api.txt": "api\n", "ui.txt": "ui\n"})
+        operations = self.service.begin_agent_completion(task["id"], self.service.completion_preview(task["id"]))
+        manager = AgentManager(self.service.tasks_root, self.repo, cli_path="/bin/true", workflow=self.service)
+        prompt = manager._completion_prompt(task["id"], operations, self.service.code_path(task["id"]), self.repo, "")
+        self.assertNotRegex(prompt, r"`git (worktree remove|branch -[dD]) ")
+        self.assertIn("削除しないでください", prompt)
+        path = self.service.code_path(task["id"])
+        for name in ("api.txt", "ui.txt"):
+            git("add", name, cwd=path)
+        git("commit", "-q", "-m", "全部", "-m", f"Task-Operation: {operations['commit']['id']}", cwd=path)
+        (path / "leftover.txt").write_text("残り\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"作業場所に未コミットの変更が残っています（1 件: leftover.txt）"):
+            self.service.reconcile_agent_commit(operations["commit"], operations["merge"])
 
     def test_completion_agent_may_write_both_checkouts(self):
         """List the task checkout and the target checkout as writable so Git can commit and merge in both."""
