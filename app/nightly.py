@@ -62,7 +62,7 @@ def run_approved_task(project: HomeProject, task: dict, poll: float) -> dict:
     """Implement or extend an approved task's plan, wait for the run, and return its record entry."""
     previous_hash = task["auto_run_plan_hash"]
     record_auto_run(project.tasks_root, task["id"], task["plan_approval"]["plan_hash"])
-    experiment = task["implementation"]["state"] == "succeeded" and bool(task["implementation"].get("changed_files"))
+    experiment = task["implementation"]["state"] == "succeeded"
     run_kind = "experiment" if experiment else "implement"
     try:
         run = project.agent.start_chat(task["id"], "result", EXPERIMENT_MESSAGE) if experiment else project.agent.start_implementation(task["id"], NIGHT_INSTRUCTION)

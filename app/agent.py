@@ -148,7 +148,7 @@ class AgentManager:
             return self.resume_completion(task_id, message)
         if phase == "result" and self.workflow and self.workflow.children(task_id):
             raise ValueError("親タスクでは子タスクの総括を実行してください")
-        if phase == "result" and not task["implementation"].get("changed_files"):
+        if phase == "result" and not (task["implementation"].get("changed_files") or task["implementation"]["state"] == "succeeded"):
             raise ValueError("Result chat starts after the first implementation")
         image_names = validate_chat_images(self.tasks_root, task_id, images if images is not None else [])
         file_names = validate_chat_files(self.tasks_root, task_id, files if files is not None else [])
@@ -584,11 +584,12 @@ class AgentManager:
                     if not changed and response["outcome"] == "inconclusive" and response["needs_followup"]:
                         raise PlanChangeNeeded(response["message"].strip() or "計画の変更が必要です")
                     raise ValueError("Implementation needs a validation report")
-                if not changed:
-                    raise RuntimeError("Agent finished, but no project code change was detected")
+                if not changed and response["outcome"] == "inconclusive" and response["needs_followup"]:
+                    raise RuntimeError(f"コードの変更が無く、結論も保留のため失敗として扱いました。Agentの報告: {response['message'].strip() or 'なし'}")
                 task = append_report(self.tasks_root, task_id, response["outcome"], changed, response["evidence_files"], run["provider"], run["model"], response["needs_followup"], commit_message=response.get("commit_message", ""))
                 report_number = task["reports"][-1]["number"]
-                append_chat(self.tasks_root, task_id, "result", "system", f"実装と検証を実行し、レポート {report_number} を追加しました。変更ファイル: {', '.join(changed)}\n\n{response['message']}", report_number=report_number)
+                changes = f"変更ファイル: {', '.join(changed)}" if changed else "コードの変更はありません（測定・検証のみ）。"
+                append_chat(self.tasks_root, task_id, "result", "system", f"実装と検証を実行し、レポート {report_number} を追加しました。{changes}\n\n{response['message']}", report_number=report_number)
                 outcome = {"state": "succeeded", "message": response["message"], "changed_files": changed, "validation_outcome": response["outcome"], "report_number": report_number}
         except (OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError) as error:
             cancelled = self.cancel_events[run_id].is_set()
@@ -666,8 +667,10 @@ class AgentManager:
         """Build an implementation prompt from task ID and instruction; return text."""
         task = read_task(self.tasks_root, task_id)
         return (
-            "日本語で応答してください。以下の承認済み計画に従い、このリポジトリで実際にコードを変更してください。"
-            "コード変更後、そのまま計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.html、"
+            "日本語で応答してください。以下の承認済み計画に従って作業してください。計画がコードの変更を含むなら、このリポジトリで実際にコードを変更してください。"
+            "計画が測定や検証だけでコードの変更を含まない場合は、コードを変更せず、測定・検証とレポート作成だけを行ってください（その場合、commit_messageは空文字にしてください）。"
+            "コードを変更する計画なのに変更しなかった場合は、成功とせず、outcomeをinconclusive、needs_followupをtrueにして理由をmessageに書いてください。"
+            "コード変更後（または変更しない計画ではそのまま）、計画の確かめ方を実行してください。今回の結果はタスクのreport-draft.html、"
             "検証用スクリプトはvalidation/、画像・動画・測定データはevidence/に保存してください。"
             f"{evidence_rule()}"
             "生成した画像は自分で開いて体裁を確認し、内容の解釈をreport-draft.htmlに書いてください。"

@@ -183,7 +183,9 @@ class TaskWorkflowService:
         if not paths:
             if task.get("legacy_completed"):
                 return {"kind": "legacy", "branch": task["branch"], "head": self.git.head(task["branch"]), "paths": [], "report_number": reports[-1]["number"]}
-            raise ValueError("コミットする変更がありません")
+            if task["commit_hash"] or task.get("commit_pending"):
+                raise ValueError("コミットする変更がありません")
+            return {"kind": "empty", "branch": task["branch"], "head": self.git.head(task["branch"]), "paths": [], "report_number": reports[-1]["number"]}
         return {"kind": "commit", "branch": task["branch"], "head": self.git.head(task["branch"]), "paths": paths, "snapshot": self.git.worktree_tree(self.code_path(task_id)), "report_number": reports[-1]["number"]}
 
     def _merge_preview(self, task: dict, target: str) -> dict:
@@ -329,14 +331,19 @@ class TaskWorkflowService:
             return aborted
 
     def complete_task(self, task_id: str, expected: dict) -> dict:
-        """Complete a legacy task without new Git history and return its record."""
+        """Complete a legacy or code-unchanged task without new Git history and return its record."""
         with self.lock:
             if self.agent and self.agent.related_active(task_id):
                 raise ValueError("このタスクまたは親子タスクでAgentを実行中です")
             preview = self.completion_preview(task_id)
-            if preview["kind"] != "legacy" or any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number")):
+            if preview["kind"] not in {"legacy", "empty"} or any(expected.get(key) != preview[key] for key in ("kind", "head", "report_number")):
                 raise ValueError("確認後にタスクの状態が変わりました。再確認してください")
-            return mark_task_completed(self.tasks_root, task_id, None, "legacy")
+            if preview["kind"] == "empty":
+                if self.git.git("merge-base", "--is-ancestor", preview["branch"], self.merge_target(task_id), check=False).returncode:
+                    raise ValueError("作業ブランチに統合先へ未統合のコミットがあります。Git履歴を確認してください")
+                self.git.remove(preview["branch"])
+                self.release_code(task_id)
+            return mark_task_completed(self.tasks_root, task_id, None, preview["kind"])
 
     def recover_operations(self) -> None:
         """Finish task metadata after Agent commits or merges interrupted by a restart; return nothing."""

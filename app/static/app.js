@@ -493,7 +493,7 @@ function render() {
   renderParallelChildren();
   $('#evidence-section').classList.toggle('hidden', isPlan);
   $('#chat-context').textContent = isPlan ? '計画について議論' : '検証・修正について議論';
-  $('#chat-input').placeholder = task.completion_waiting ? 'Agentの完了確認への回答を入力（文章のみ）' : isPlan ? 'Agentに相談する内容を入力' : task.child_count ? '子タスクの総括ボタンを使用してください' : task.implementation?.changed_files?.length ? '追加検証や修正したいことを入力' : '実装後に追加検証や修正を依頼できます';
+  $('#chat-input').placeholder = task.completion_waiting ? 'Agentの完了確認への回答を入力（文章のみ）' : isPlan ? 'Agentに相談する内容を入力' : task.child_count ? '子タスクの総括ボタンを使用してください' : task.implementation?.changed_files?.length || task.implementation?.state === 'succeeded' ? '追加検証や修正したいことを入力' : '実装後に追加検証や修正を依頼できます';
   const busy = isTaskBusy(task);
   renderAgentProgress();
   $('#rename-task').disabled = busy;
@@ -820,7 +820,7 @@ function renderChat() {
     container.append(card);
   }
   container.scrollTop = container.scrollHeight;
-  const canChat = agentAvailable() && modelSelected() && !busy && !sendingChat && state.task.status !== 'completed' && (state.tab === 'plan' || Boolean(state.task.completion_waiting) || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length)));
+  const canChat = agentAvailable() && modelSelected() && !busy && !sendingChat && state.task.status !== 'completed' && (state.tab === 'plan' || Boolean(state.task.completion_waiting) || (!state.task.child_count && Boolean(state.task.implementation?.changed_files?.length || state.task.implementation?.state === 'succeeded')));
   $('#chat-input').disabled = !canChat;
   $('#chat-send').disabled = !canChat;
   $('#chat-image-input').disabled = !canChat;
@@ -1306,7 +1306,10 @@ function bindEvents() {
         $('#commit-instruction').focus();
         return;
       }
-      if (!window.confirm('検証結果を確認し、タスクを完了しますか？\n移行前の検証記録として完了します。新しいコミットは作りません。')) return;
+      const message = preview.kind === 'empty'
+        ? 'コードの変更がないタスクです。コミットや統合はせずにタスクを完了し、空の作業ブランチと作業場所を削除します。\nレポートと資料の記録は残ります。よろしいですか？'
+        : '検証結果を確認し、タスクを完了しますか？\n移行前の検証記録として完了します。新しいコミットは作りません。';
+      if (!window.confirm(message)) return;
       state.task = await api(`/api/tasks/${state.task.id}/complete`, {
         method: 'POST', body: JSON.stringify(preview),
       });
