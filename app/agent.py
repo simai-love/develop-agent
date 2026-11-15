@@ -309,7 +309,7 @@ class AgentManager:
         if outcome["state"] == "succeeded":
             lines.append(f"マージ: {merge['branch']} → {merge['destination']} ({task['merge_hash'][:10]})")
         if merge.get("cleanup") == "gui":
-            lines.append("Agentが作業ブランチを削除しなかったため、GUIが削除しました。")
+            lines.append("作業ブランチと作業場所は、検証のあとにGUIが削除しました。")
         if aborted:
             lines.append(f"途中のマージを中止し、{merge['destination']} を元に戻しました。")
         if diagnostic_path.exists():
@@ -394,7 +394,8 @@ class AgentManager:
             "確実に解決できない場合は `git merge --abort` で元に戻し、needs_user_input を true にして、どのファイルで何が競合したかと解決案を question に書いてください。"
         )
         steps.append(
-            f"マージが成功した場合だけ、{target_path} で `git worktree remove {source_path}` と `git branch -d {merge['branch']}` を実行し、作業ブランチを削除してください。"
+            f"作業ブランチ {merge['branch']} と作業場所 {source_path} は削除しないでください（`git worktree remove`、`git branch -d/-D`、`rm` を含む）。"
+            "サンドボックスでは作業場所の削除が途中で失敗して作業場所を壊すことがあるため、検証のあとにGUIが削除します。"
         )
         return (
             "日本語で作業してください。ユーザーがこのタスクの変更全体を確認し、完了と統合を承認しました。次の手順を順に行ってください。\n"

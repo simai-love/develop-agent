@@ -280,8 +280,11 @@ class TaskWorkflowService:
             self.record_operation(task_id, operation)
             final_tree = self.git.git("rev-parse", f"{source}^{{tree}}").stdout.strip()
             path = self.git.path(branch)
-            if final_tree != operation["expected_tree"] or (self.git.has_branch(branch) and path.exists() and not self.git.clean(path)):
+            if final_tree != operation["expected_tree"]:
                 raise ValueError("一部のコミットだけが作成されました。残りの変更を確認してください")
+            if self.git.has_branch(branch) and path.exists() and not self.git.clean(path):
+                left = self.git.changed(path)
+                raise ValueError(f"作業場所に未コミットの変更が残っています（{len(left)} 件: {', '.join(left[:3])}{' ほか' if len(left) > 3 else ''}）。作業場所を確認してください")
             task["commit_pending"] = False
             save_metadata(self.tasks_root, task)
             self.release_code(task_id)
