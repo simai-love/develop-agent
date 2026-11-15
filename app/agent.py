@@ -253,8 +253,9 @@ class AgentManager:
             source_path = self.workflow.code_path(task_id)
             target_path = git.ensure(merge["destination"])
             common_dir = git.git("rev-parse", "--git-common-dir", cwd=target_path).stdout.strip()
-            # The sandbox only lets Git write a worktree's own admin files (.git/worktrees/<name>) when that worktree is the working directory or is listed itself, so both checkouts are listed explicitly.
-            directories = [task_path, (target_path / common_dir).resolve(), git.worktrees, source_path, target_path]
+            # Sandboxes keep a linked worktree's admin files (.git/worktrees/<name>) read-only unless they are listed themselves (Codex) or the worktree is listed (Claude Code), so both checkouts and their admin directories are listed explicitly.
+            admin_dirs = [Path(git.git("rev-parse", "--absolute-git-dir", cwd=path).stdout.strip()) for path in (source_path, target_path)]
+            directories = list(dict.fromkeys([task_path, (target_path / common_dir).resolve(), git.worktrees, source_path, target_path, *admin_dirs]))
             prompt = self._completion_prompt(task_id, operations, source_path, target_path, instruction)
             schema_path = SKILL_ROOT / "references" / "commit-response.schema.json"
             if run["provider"] == "codex":
