@@ -336,6 +336,40 @@ class TaskWorkflowTest(unittest.TestCase):
         self.assertIn(str(self.service.git.worktrees / task["branch"].replace("/", "__")), added)
         self.assertEqual(task["status"], "completed")
 
+    def test_code_unchanged_task_completes_without_commit_and_removes_branch(self):
+        """Complete a measurement-only task without commits, remove its empty branch, and keep its records."""
+        task = self.service.create_root_task("測定のみ")
+        self.service.claim_code(task["id"])
+        set_implementation(self.service.tasks_root, task["id"], "succeeded", [])
+        write_text(report_draft_path(self.service.tasks_root, task["id"]), "<h1>測定</h1>")
+        append_report(self.service.tasks_root, task["id"], "supported", [], [], "codex", "test", False)
+        preview = self.service.completion_preview(task["id"])
+        self.assertEqual((preview["kind"], preview["paths"]), ("empty", []))
+        done = self.service.complete_task(task["id"], preview)
+        self.assertEqual(done["status"], "completed")
+        self.assertIsNone(done["commit_hash"])
+        self.assertFalse(done["legacy_completed"])
+        self.assertFalse(self.service.git.has_branch(task["branch"]))
+        self.assertEqual(len(done["reports"]), 1)
+
+    def test_code_unchanged_completion_refuses_unmerged_commits(self):
+        """Keep the branch when someone committed on it, even if the worktree itself is clean."""
+        task = self.service.create_root_task("コミット済み")
+        self.service.claim_code(task["id"])
+        path = self.service.code_path(task["id"])
+        (path / "x.txt").write_text("x\n", encoding="utf-8")
+        git("add", "x.txt", cwd=path)
+        git("commit", "-q", "-m", "手動コミット", cwd=path)
+        set_implementation(self.service.tasks_root, task["id"], "succeeded", [])
+        write_text(report_draft_path(self.service.tasks_root, task["id"]), "<h1>測定</h1>")
+        append_report(self.service.tasks_root, task["id"], "supported", [], [], "codex", "test", False)
+        preview = self.service.completion_preview(task["id"])
+        self.assertEqual(preview["kind"], "empty")
+        with self.assertRaisesRegex(ValueError, "未統合のコミット"):
+            self.service.complete_task(task["id"], preview)
+        self.assertTrue(self.service.git.has_branch(task["branch"]))
+        self.assertNotEqual(read_task(self.service.tasks_root, task["id"])["status"], "completed")
+
     def test_dirty_target_no_longer_blocks_the_agent_run(self):
         """Start the Agent even when dev has an untracked file, and tell it which files are there."""
         task = self.ready_task("統合先が汚れている", {"api.txt": "api\n"})

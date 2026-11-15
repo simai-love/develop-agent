@@ -395,6 +395,47 @@ class WorkflowTest(unittest.TestCase):
             self._await_run(manager, manager.start_chat(task["id"], "plan", "別案を検討")["id"])
             self.assertEqual(read_task(tasks, task["id"])["implementation"]["state"], "not_started")
 
+    def test_measurement_only_implementation_succeeds_without_code_change(self):
+        """Accept a report-only run without code changes, but fail an inconclusive one."""
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            self._init_project(project)
+            tasks = project / "tasks"
+            tasks.mkdir()
+            cli = project / "fake-codex"
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "from pathlib import Path\n"
+                "prompt = sys.stdin.read()\n"
+                "import re\n"
+                "task = Path(re.search(r'タスク保存先: (\\S+)', prompt).group(1))\n"
+                "(task / 'report-draft.html').write_text('<h1>測定結果</h1><h2>結論</h2><p>測定した</p>', encoding='utf-8')\n"
+                "partial = '保留にする' in prompt\n"
+                "data = {'message': '測定のみ', 'outcome': 'inconclusive' if partial else 'supported', 'evidence_files': [], 'needs_followup': partial}\n"
+                "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps(data, ensure_ascii=False))\n",
+                encoding="utf-8",
+            )
+            cli.chmod(0o755)
+            plan = "# 計画\n表の空欄を測定で埋める"
+            manager = AgentManager(tasks, project, str(cli))
+            partial = create_task(tasks, "保留の測定")
+            update_task(tasks, partial["id"], {"plan": plan + "保留にする"})
+            set_readiness(tasks, partial["id"], True, plan + "保留にする", "実装可能")
+            self._await_run(manager, manager.start_implementation(partial["id"])["id"], "failed")
+            self.assertEqual(read_task(tasks, partial["id"])["reports"], [])
+            self.assertIn("コードの変更が無く", read_chat(tasks, partial["id"], "result")[-1]["content"])
+            task = create_task(tasks, "測定のみ")
+            update_task(tasks, task["id"], {"plan": plan})
+            set_readiness(tasks, task["id"], True, plan, "実装可能")
+            self._await_run(manager, manager.start_implementation(task["id"])["id"])
+            task = read_task(tasks, task["id"])
+            self.assertEqual(task["implementation"]["state"], "succeeded")
+            self.assertEqual(task["implementation"]["changed_files"], [])
+            self.assertEqual(len(task["reports"]), 1)
+            self.assertIn("コードの変更はありません", read_chat(tasks, task["id"], "result")[-1]["content"])
+            manager.start_chat(task["id"], "result", "もう一度確かめて")
+
     def test_implementation_stop_shows_reason_in_result_chat(self):
         """Check a plan mismatch reaches screen 02 without creating a report."""
         with tempfile.TemporaryDirectory() as temporary:

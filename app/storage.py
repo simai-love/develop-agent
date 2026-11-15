@@ -289,7 +289,7 @@ def complete_task(root: Path, task_id: str, result: str) -> dict:
 
 def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: str) -> dict:
     """Mark task_id complete after Git or legacy review and return its record."""
-    if kind not in {"commit", "merge", "legacy"}:
+    if kind not in {"commit", "merge", "legacy", "empty"}:
         raise ValueError("Invalid completion kind")
     task = read_task(root, task_id)
     task["status"] = "completed"
@@ -298,7 +298,7 @@ def mark_task_completed(root: Path, task_id: str, git_hash: str | None, kind: st
     task["updated_at"] = now()
     if kind == "legacy":
         task["legacy_completed"] = True
-    else:
+    elif kind != "empty":
         task["commit_hash" if kind == "commit" else "merge_hash"] = git_hash
         if kind == "commit" and git_hash and git_hash not in task["commit_hashes"]:
             task["commit_hashes"].append(git_hash)
