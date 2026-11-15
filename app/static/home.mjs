@@ -9,6 +9,10 @@ const filters = [['all', 'すべて'], ['open', '未完了'], ['agent', 'Agent �
 const ownerFilters = new Set(['agent', 'user', 'scheduled']);
 const sorts = [['updated', '更新日時'], ['created', '作成日時'], ['status', 'ステータス'], ['manual', '手動']];
 const taskOrderStorageKey = 'develop-agent.home.task-order';
+const collapsedStorageKey = 'develop-agent.home.collapsed';
+const sideOpenStorageKey = 'develop-agent.home.side-open';
+const ownerList = [['agent', 'Agent 作業中'], ['user', 'ユーザー待ち'], ['scheduled', '夜間実行待ち'], ['done', '完了']];
+const attentionLimit = 6;
 const projectOrderStorageKey = 'develop-agent.home.project-order';
 let dragging = null;
 const runLabels = { implement: '実装', experiment: '追加実験', plan: '計画作成' };
@@ -374,10 +378,92 @@ function recordSection(project) {
   return section;
 }
 
+function storedSet(key) {
+  /** Return the per-browser set of project IDs saved under key. */
+  return new Set(readJson(key, []));
+}
+
+function toggleStored(key, projectId, on) {
+  /** Add or remove projectId in the per-browser set saved under key; return nothing. */
+  const ids = storedSet(key);
+  if (on) ids.add(projectId); else ids.delete(projectId);
+  store(key, JSON.stringify([...ids]));
+}
+
+function ownerCounts(tasks) {
+  /** Count tasks by who acts next (agent, user, scheduled, done); return an object. */
+  const counts = { agent: 0, user: 0, scheduled: 0, done: 0 };
+  for (const task of tasks) counts[task.display_status.owner] += 1;
+  return counts;
+}
+
+function openProjectSection(projectId) {
+  /** Expand and scroll to the project's board on the home view; return nothing. */
+  toggleStored(collapsedStorageKey, projectId, false);
+  renderHome();
+  document.querySelector(`.home-project[data-project-id="${CSS.escape(projectId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderOverview() {
+  /** Render the one-screen summary: totals by owner and each project's counts and tasks needing action; return nothing. */
+  const projects = orderedProjects();
+  const totals = ownerCounts(projects.flatMap((project) => project.tasks));
+  const box = element('section', 'home-overview-box');
+  const stats = element('div', 'home-ov-stats');
+  for (const [owner, label] of ownerList) {
+    const stat = element('button', `home-ov-stat ${owner}${totals[owner] ? '' : ' zero'}`);
+    stat.type = 'button';
+    stat.title = `${label}のタスクだけを表示`;
+    stat.append(element('b', '', String(totals[owner])), element('span', '', label));
+    stat.addEventListener('click', () => { view.filter = owner === 'done' ? 'done' : owner; store(filterStorageKey, view.filter); renderHome(); });
+    stats.append(stat);
+  }
+  box.append(stats);
+  const rows = element('div', 'home-ov-rows');
+  for (const project of projects) {
+    const counts = ownerCounts(project.tasks);
+    const row = element('div', 'home-ov-row');
+    const name = element('button', 'home-ov-name', project.name);
+    name.type = 'button';
+    name.title = `${project.name} のタスクへ移動`;
+    name.addEventListener('click', () => openProjectSection(project.id));
+    const bar = element('div', 'home-ov-bar');
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', ownerList.map(([owner, label]) => `${label} ${counts[owner]}`).join('、'));
+    for (const [owner] of ownerList) if (counts[owner]) { const part = element('i', owner); part.style.flexGrow = String(counts[owner]); bar.append(part); }
+    const nums = element('div', 'home-ov-nums');
+    for (const [owner, label] of ownerList) if (owner !== 'done' && counts[owner]) nums.append(element('span', owner, `${label} ${counts[owner]}`));
+    nums.append(element('span', 'done', `完了 ${counts.done}/${project.tasks.length}`));
+    const attention = element('div', 'home-ov-tasks');
+    const needing = project.tasks.filter((task) => task.display_status.owner !== 'done')
+      .sort((a, b) => statusOrder.indexOf(a.display_status.key) - statusOrder.indexOf(b.display_status.key));
+    for (const task of needing.slice(0, attentionLimit)) {
+      const chip = element('button', `home-ov-task ${task.display_status.owner}`);
+      chip.type = 'button';
+      chip.title = `${task.title}：${task.display_status.owner_label}・${task.display_status.label}（${task.display_status.detail}）`;
+      chip.append(element('i', 'home-owner-dot'), document.createTextNode(`${task.title} · ${task.display_status.label}`));
+      chip.addEventListener('click', () => context.openTask(project.id, task.id).catch((error) => context.toast(error.message)));
+      attention.append(chip);
+    }
+    if (needing.length > attentionLimit) attention.append(element('span', 'home-ov-more', `ほか ${needing.length - attentionLimit} 件`));
+    if (!needing.length) attention.append(element('span', 'home-ov-more', '対応が必要なタスクはありません'));
+    row.append(name, bar, nums, attention);
+    rows.append(row);
+  }
+  box.append(rows);
+  $('#home-overview').replaceChildren(box);
+}
+
 function projectSection(project) {
   /** Build one project's board: header, task cards, memos, and records; return it. */
-  const section = element('section', 'home-project');
+  const collapsed = storedSet(collapsedStorageKey).has(project.id);
+  const section = element('section', `home-project${collapsed ? ' collapsed' : ''}`);
   section.dataset.projectId = project.id;
+  const fold = element('button', 'home-fold', collapsed ? '▸' : '▾');
+  fold.type = 'button';
+  fold.title = collapsed ? 'タスクを開く' : 'タスクを畳む';
+  fold.setAttribute('aria-expanded', String(!collapsed));
+  fold.addEventListener('click', () => { toggleStored(collapsedStorageKey, project.id, !collapsed); renderHome(); });
   const handle = element('span', 'home-drag-handle', '⠿');
   handle.title = 'ドラッグしてプロジェクトの順番を変更';
   handle.setAttribute('aria-hidden', 'true');
@@ -391,10 +477,12 @@ function projectSection(project) {
   }, false);
   const head = element('div', 'home-project-head');
   const title = element('div');
+  const tasks = visibleTasks([...project.tasks], project.id);
+  const emptyNote = project.tasks.length ? `「${filters.find(([id]) => id === view.filter)[1]}」のタスクはありません` : 'タスクはまだありません';
   const open = project.tasks.filter((task) => task.status !== 'completed').length;
   const name = element('h2');
-  name.append(handle, document.createTextNode(project.name));
-  title.append(name, element('small', '', `${project.path} · 未完了 ${open} / 全 ${project.tasks.length}`));
+  name.append(handle, fold, document.createTextNode(project.name));
+  title.append(name, element('small', '', `${project.path} · 未完了 ${open} / 全 ${project.tasks.length}${tasks.length ? '' : ` · ${emptyNote}`}`));
   const create = element('button', 'subtle-button', '＋ タスク');
   create.type = 'button';
   create.addEventListener('click', () => context.createTask(project.id).catch((error) => context.toast(error.message)));
@@ -403,20 +491,27 @@ function projectSection(project) {
   files.addEventListener('click', () => openFileBrowser({ repository: project.id }));
   head.append(title, agentPicker(project), files, create);
   const board = element('div', 'home-board');
-  const tasks = visibleTasks([...project.tasks], project.id);
-  if (!tasks.length) board.append(element('p', 'home-empty', project.tasks.length ? `「${filters.find(([id]) => id === view.filter)[1]}」のタスクはありません。` : 'このプロジェクトのタスクはありません。'));
+  if (!tasks.length) section.classList.add('idle');
   for (const task of tasks) board.append(taskCard(project, task));
-  const side = element('div', 'home-side');
-  side.append(memoSection(project), recordSection(project));
-  const layout = element('div', 'home-layout');
-  layout.append(board, side);
-  section.append(head, layout);
+  const side = element('details', 'home-side-details');
+  side.open = storedSet(sideOpenStorageKey).has(project.id) || editingMemo.has(project.id);
+  side.addEventListener('toggle', () => { if (!editingMemo.has(project.id)) toggleStored(sideOpenStorageKey, project.id, side.open); });
+  const lastNight = project.nightly[0];
+  side.append(element('summary', '', `メモ ${project.memos.length} ・ 日報 ${project.reports.length} ・ 夜間の自動実行 ${project.nightly.length}${lastNight ? `（最新 ${lastNight.date}）` : ''}`));
+  const sideGrid = element('div', 'home-side-grid');
+  sideGrid.append(memoSection(project), recordSection(project));
+  side.append(sideGrid);
+  const body = element('div', 'home-body');
+  if (tasks.length) body.append(board);
+  body.append(side);
+  section.append(head, body);
   return section;
 }
 
 function renderHome() {
   /** Render the toolbar and every project's board from loaded data; return nothing. */
   if (!data) return;
+  renderOverview();
   renderToolbar();
   const sections = orderedProjects().map(projectSection);
   for (const failure of data.errors) sections.push(element('p', 'home-error', `${failure.name || failure.id}: ${failure.error}`));
